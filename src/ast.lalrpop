@@ -1,0 +1,175 @@
+use std::str::FromStr;
+use super::*;
+
+grammar;
+
+pub Program : Program = {
+  <ProgramItems> => Program(<>)
+}
+
+ProgramItems: Vec<Item> = {
+  <Item> => vec![<>],
+  <items: ProgramItems> <item: Item> => {
+    let mut items = items;
+    items.push(item);
+    items
+  }
+}
+
+Item: Item = {
+  <Function> => <>,
+  <StructDecl> => <>,
+  <Use> => <>
+}
+
+Use: Item = {
+  "use" "::" <Ident> ";" => Item::Use(true, <>),
+  "use" <Ident> ";" => Item::Use(false, <>)
+}
+
+StructDecl: Item = {
+  "struct" <name: Ident> "{" <list: StructFieldList> "}" => Item::StructDecl(name, list)
+}
+
+StructFieldList: Vec<(String, Type)> = {
+  <name: Ident> ":" <ty: Type> => vec![(name, ty)],
+  <list: StructFieldList> "," <name: Ident> ":" <ty: Type> => {
+    let mut list = list;
+    list.push((name, ty));
+    list
+  },
+  <StructFieldList> "," => <>
+}
+
+Function: Item = {
+  "fn" <name: Ident> <sig: Signature> <body: Block> => Item::Function(sig, name, body)
+};
+
+Signature: Signature = {
+  "(" ")" => Signature { args: vec![], ret: None  },
+  "(" ")" "->" <ty: Type> => Signature { args: vec![], ret: Some(ty) },
+  "(" <args: SignatureArgs> ")" => Signature { args: args, ret: None  },
+  "(" <args: SignatureArgs> ")" "->" <ty: Type> => Signature { args: args, ret: Some(ty) }
+}
+
+SignatureArgs: Vec<(String, Type)> = {
+  <arg: SignatureArg> => vec![arg],
+  <args: SignatureArgs> "," <arg: SignatureArg> => {
+    let mut args = args;
+    args.push(arg);
+    args
+  }
+}
+
+SignatureArg: (String, Type) = {
+  <arg: Ident> ":" <ty: Type> => (arg, ty)
+}
+
+Block: Block = {
+  "{" <BlockStmts> "}" => Block { statements: <> }
+}
+
+BlockStmts: Vec<Stmt> = {
+  <s: Stmt> => vec![s],
+  <b: BlockStmts> <s: Stmt> => {
+    let mut b = b;
+    b.push(s);
+    b
+  }
+}
+
+Stmt: Stmt = {
+  "let" <id: Ident> ":" <ty: Type> "=" <expr: Expr> ";" => Stmt::Declaration(id, ty, Some(expr)),
+  "let" <id: Ident> ":" <ty: Type> ";" => Stmt::Declaration(id, ty, None),
+  <id: Ident> "=" <expr: Expr> ";" => Stmt::Assignment(id, expr),
+  "return" <Expr> ";" => Stmt::Return(Some(<>)),
+  "return" ";" => Stmt::Return(None),
+  <Expr> ";" => Stmt::Expr(<>),
+  <Block> => Stmt::Block(<>),
+  <IfStmt> => Stmt::If(<>)
+}
+
+IfStmt: IfStmt = {
+  "if" <test: IfValidExpr> <then: Block> => IfStmt { test: test, then: then, alts: vec![], tail: None },
+  "if" <test: IfValidExpr> <then: Block> "else" <tail: Block> => IfStmt { test: test, then: then, alts: vec![], tail: Some(tail) },
+  "if" <test: IfValidExpr> <then: Block> "else" <stmt: IfStmt> => {
+    let mut alts = stmt.alts;
+    alts.insert(0, (stmt.test, stmt.then));
+    IfStmt { test: test, then: then, alts: vec![], tail: stmt.tail }
+  },
+}
+
+Expr: Expr = {
+  IfInvalidExpr,
+  IfValidExpr,
+}
+
+IfInvalidExpr: Expr = {
+  <name: Ident> <init_list: StructInitFields> => Expr::StructInit(name, init_list),
+}
+
+
+IfValidExpr: Expr = {
+  "&" <IfValidExpr> => Expr::Ref(<>.into()),
+  CastExpr
+}
+
+CastExpr: Expr = {
+  <expr: CastExpr> "as" <ty: Type> => Expr::Cast(expr.into(), ty),
+  CallExpr,
+}
+
+CallExpr: Expr = {
+  <fun: CallExpr> "(" <args: ArgList> ","? ")" => Expr::Call(fun.into(), args),
+  <fun: CallExpr> "(" ")" => Expr::Call(fun.into(), vec![]),
+  AtomExpr
+}
+
+ArgList: Vec<Expr> = {
+  <CallExpr> => vec![<>],
+  <list: ArgList> "," <expr: CallExpr> => {
+    let mut list = list;
+    list.push(expr);
+    list
+  }
+}
+
+AtomExpr: Expr = {
+  <Ident> => Expr::Variable(<>),
+  <n:r"-?[0-9]+"> => Expr::Integer(i64::from_str(n).unwrap()),
+  // TODO: do well
+  <s:r#""[^"]*""#> => Expr::String(s.to_string()),
+  "true" => Expr::Boolean(true),
+  "false" => Expr::Boolean(false),
+  "(" <Expr> ")"  => <>
+}
+
+StructInitFields: Vec<(String, Expr)> = {
+  "{" <name: Ident> ":" <expr: Expr> ","? "}" => vec![(name, expr)],
+  "{" <init_list: StructInitFields> "," <name: Ident> ":" <expr: Expr> ","? "}" => {
+    let mut init_list = init_list;
+    init_list.push((name, expr));
+    init_list
+  },
+}
+
+Ident: String = {
+  <s:r"[_a-zA-Z][_a-zA-Z0-9]*"> => s.to_string()
+}
+
+Type: Type = {
+  <s: Ident> => Type::Path(s),
+  "&" <ty: Type> => Type::Ref(Box::new(ty)),
+  "fn" "(" <TypeArgs> ","? ")" => Type::Fun(<>, None),
+  "fn" "(" <args: TypeArgs> ","? ")" "->" <ret: Type> => Type::Fun(args, Some(ret.into())),
+  "(" <Type> ")" => <>
+}
+
+TypeArgs: Vec<Type> = {
+  <Type> => vec![<>],
+  <args: TypeArgs> "," <ty: Type> => {
+    let mut args = args;
+    args.push(ty);
+    args
+  }
+}

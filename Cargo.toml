@@ -1,0 +1,16 @@
+[package]
+name = "lipstick"
+version = "0.1.0"
+authors = ["Roberto Vidal <vidal.roberto.j@gmail.com>"]
+edition = "2018"
+repository = "https://github.com/jrvidal/lipstick"
+description = "Lipstick for C"
+license = "GPL-3.0-or-later"
+
+
+[build-dependencies]
+lalrpop = "0.19.5"
+
+[dependencies]
+lalrpop-util = "0.19.5"
+regex = "1"
