@@ -3,6 +3,14 @@ use super::*;
 
 grammar;
 
+match {
+    r"\s*" => { }, // The default whitespace skipping is disabled an `ignore pattern` is specified
+    r"//[^\n\r]*[\n\r]*" => { }, // Skip `// comments`
+    r"/\*([^\*]*\*+[^\*/])*([^\*]*\*+|[^\*])*\*/" => { },  // Skip `/* comments */`
+} else {
+  _
+}
+
 pub Program : Program = {
   <ProgramItems> => Program(<>)
 }
@@ -66,6 +74,7 @@ SignatureArg: (String, Type) = {
 }
 
 Block: Block = {
+  "{" "}" => Block { statements: vec![] },
   "{" <BlockStmts> "}" => Block { statements: <> }
 }
 
@@ -95,7 +104,7 @@ IfStmt: IfStmt = {
   "if" <test: IfValidExpr> <then: Block> "else" <stmt: IfStmt> => {
     let mut alts = stmt.alts;
     alts.insert(0, (stmt.test, stmt.then));
-    IfStmt { test: test, then: then, alts: vec![], tail: stmt.tail }
+    IfStmt { test: test, then: then, alts, tail: stmt.tail }
   },
 }
 
@@ -145,12 +154,16 @@ AtomExpr: Expr = {
 }
 
 StructInitFields: Vec<(String, Expr)> = {
-  "{" <name: Ident> ":" <expr: Expr> ","? "}" => vec![(name, expr)],
-  "{" <init_list: StructInitFields> "," <name: Ident> ":" <expr: Expr> ","? "}" => {
-    let mut init_list = init_list;
-    init_list.push((name, expr));
-    init_list
-  },
+  "{" <StructInitNakedFields> ","? "}" => <>,
+}
+
+StructInitNakedFields: Vec<(String, Expr)> = {
+  <name: Ident> ":" <expr: Expr> => vec![(name, expr)],
+  <list: StructInitNakedFields> "," <name: Ident> ":" <expr: Expr> => {
+    let mut list = list;
+    list.push((name, expr));
+    list
+  }
 }
 
 Ident: String = {
