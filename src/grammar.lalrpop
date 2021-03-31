@@ -55,13 +55,13 @@ Function: Item = {
 
 Signature: Signature = {
   "(" ")" => Signature { args: vec![], ret: None  },
-  "(" ")" "->" <ty: Type> => Signature { args: vec![], ret: Some(ty) },
-  "(" <args: SignatureArgs> ")" => Signature { args: args, ret: None  },
+  "(" ")" "->" <Type> => Signature { args: vec![], ret: Some(<>) },
+  "(" <SignatureArgs> ")" => Signature { args: <>, ret: None  },
   "(" <args: SignatureArgs> ")" "->" <ty: Type> => Signature { args: args, ret: Some(ty) }
 }
 
 SignatureArgs: Vec<(String, Type)> = {
-  <arg: SignatureArg> => vec![arg],
+  <SignatureArg> => vec![<>],
   <args: SignatureArgs> "," <arg: SignatureArg> => {
     let mut args = args;
     args.push(arg);
@@ -79,7 +79,7 @@ Block: Block = {
 }
 
 BlockStmts: Vec<Stmt> = {
-  <s: Stmt> => vec![s],
+  <Stmt> => vec![<>],
   <b: BlockStmts> <s: Stmt> => {
     let mut b = b;
     b.push(s);
@@ -88,23 +88,27 @@ BlockStmts: Vec<Stmt> = {
 }
 
 Stmt: Stmt = {
+  "let" <id: Ident> <t:("=" <Expr>)?> ";" => Stmt::UntypedDeclaration,
   "let" <id: Ident> ":" <ty: Type> "=" <expr: Expr> ";" => Stmt::Declaration(id, ty, Some(expr)),
   "let" <id: Ident> ":" <ty: Type> ";" => Stmt::Declaration(id, ty, None),
-  <id: Ident> "=" <expr: Expr> ";" => Stmt::Assignment(id, expr),
-  "return" <Expr> ";" => Stmt::Return(Some(<>)),
-  "return" ";" => Stmt::Return(None),
+  <place: Expr> "=" <expr: Expr> ";" => Stmt::Assignment(place, expr),
+  "return" <Expr?> ";" => Stmt::Return(<>),
   <Expr> ";" => Stmt::Expr(<>),
   <Block> => Stmt::Block(<>),
-  <IfStmt> => Stmt::If(<>)
+  <IfStmt> => Stmt::If(<>),
+  "while" <IfValidExpr> <Block> => Stmt::While(<>),
+  <label: Lifetime> ":" <stmt: Stmt> => Stmt::Labeled(label, stmt.into()),
+  "break" <Lifetime?> ";" => Stmt::Break(<>),
+  "continue" <Lifetime?> ";" => Stmt::Continue(<>),
 }
 
 IfStmt: IfStmt = {
-  "if" <test: IfValidExpr> <then: Block> => IfStmt { test: test, then: then, alts: vec![], tail: None },
-  "if" <test: IfValidExpr> <then: Block> "else" <tail: Block> => IfStmt { test: test, then: then, alts: vec![], tail: Some(tail) },
+  "if" <test: IfValidExpr> <then: Block> => IfStmt { test, then, alts: vec![], tail: None },
+  "if" <test: IfValidExpr> <then: Block> "else" <tail: Block> => IfStmt { test, then, alts: vec![], tail: Some(tail) },
   "if" <test: IfValidExpr> <then: Block> "else" <stmt: IfStmt> => {
     let mut alts = stmt.alts;
     alts.insert(0, (stmt.test, stmt.then));
-    IfStmt { test: test, then: then, alts, tail: stmt.tail }
+    IfStmt { test, then, alts, tail: stmt.tail }
   },
 }
 
@@ -119,24 +123,41 @@ IfInvalidExpr: Expr = {
 
 
 IfValidExpr: Expr = {
-  "&" <IfValidExpr> => Expr::Ref(<>.into()),
+  <IfValidExpr> "." <Ident> "(" ")" => Expr::MethodCall,
+  <IfValidExpr> "." <Ident> "(" <ArgList> ")" => Expr::MethodCall,
+  <this: IfValidExpr> "." <field: Ident> => Expr::Field(this.into(), field),
+  IndexExpr
+}
+
+IndexExpr: Expr = {
+  <arr: IndexExpr> "[" <index: IndexExpr> "]" => Expr::Index(arr.into(), index.into()),
+  RefExpr
+}
+
+RefExpr: Expr = {
+  "&" <RefExpr> => Expr::Ref(<>.into()),
+  CallExpr
+}
+
+CallExpr: Expr = {
+  <fun: CallExpr> "(" <args: ArgList> ","? ")" => Expr::Call(fun.into(), args),
+  <CallExpr> "(" ")" => Expr::Call(<>.into(), vec![]),
+  UnaryExpr
+}
+
+UnaryExpr: Expr = {
+  "*" <UnaryExpr> => Expr::Deref(<>.into()),
   CastExpr
 }
 
 CastExpr: Expr = {
   <expr: CastExpr> "as" <ty: Type> => Expr::Cast(expr.into(), ty),
-  CallExpr,
-}
-
-CallExpr: Expr = {
-  <fun: CallExpr> "(" <args: ArgList> ","? ")" => Expr::Call(fun.into(), args),
-  <fun: CallExpr> "(" ")" => Expr::Call(fun.into(), vec![]),
-  AtomExpr
+  AtomExpr,
 }
 
 ArgList: Vec<Expr> = {
-  <CallExpr> => vec![<>],
-  <list: ArgList> "," <expr: CallExpr> => {
+  <Expr> => vec![<>],
+  <list: ArgList> "," <expr: Expr> => {
     let mut list = list;
     list.push(expr);
     list
@@ -145,9 +166,9 @@ ArgList: Vec<Expr> = {
 
 AtomExpr: Expr = {
   <Ident> => Expr::Variable(<>),
-  <n:r"-?[0-9]+"> => Expr::Integer(i64::from_str(n).unwrap()),
+  <r"-?[0-9]+"> => Expr::Integer(i64::from_str(<>).unwrap()),
   // TODO: do well
-  <s:r#""[^"]*""#> => Expr::String(s.to_string()),
+  <r#""[^"]*""#> => Expr::String(<>.to_string()),
   "true" => Expr::Boolean(true),
   "false" => Expr::Boolean(false),
   "(" <Expr> ")"  => <>
@@ -167,15 +188,18 @@ StructInitNakedFields: Vec<(String, Expr)> = {
 }
 
 Ident: String = {
-  <s:r"[_a-zA-Z][_a-zA-Z0-9]*"> => s.to_string()
+  <r"[_a-zA-Z][_a-zA-Z0-9]*"> => <>.to_string()
+}
+
+Lifetime: String = {
+  <r"'[_a-zA-Z][_a-zA-Z0-9]*"> => <>[1..].to_string()
 }
 
 Type: Type = {
-  <s: Ident> => Type::Path(s),
-  "&" <ty: Type> => Type::Ref(Box::new(ty)),
-  "fn" "(" <TypeArgs> ","? ")" => Type::Fun(<>, None),
-  "fn" "(" <args: TypeArgs> ","? ")" "->" <ret: Type> => Type::Fun(args, Some(ret.into())),
-  "(" <Type> ")" => <>
+  <Ident> => Type::Ident(<>),
+  "&" <Type> => Type::Ref(<>.into()),
+  "fn" "(" <args: TypeArgs> ","? ")" <ret: ("->" <Type>)?> => Type::Fun(args, ret.map(Box::new)),
+  "[" <ty: Type> ";" <expr: Expr> "]" => Type::Array(ty.into(), expr.into()),
 }
 
 TypeArgs: Vec<Type> = {

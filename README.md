@@ -1,6 +1,6 @@
-# lipstick 💄
+# lipstick 💄🐷
 
-> You can't put lipstick on a pig 
+> You _can_ put lipstick on a pig 
 
 
 ### Input

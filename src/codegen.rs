@@ -159,7 +159,7 @@ impl Display for Block {
 #[derive(Debug)]
 pub enum Stmt {
     Declaration(Variable, Option<Expr>),
-    Assignment(String, Expr),
+    Assignment(Expr, Expr),
     Block(Block),
     Return(Option<Expr>),
     Expr(Expr),
@@ -169,6 +169,13 @@ pub enum Stmt {
         alts: Vec<(Expr, Block)>,
         tail: Option<Block>,
     },
+    While {
+        test: Expr,
+        block: Block,
+    },
+    Labeled(String, Box<Stmt>),
+    Break(Option<String>),
+    Continue(Option<String>),
 }
 
 impl Display for Stmt {
@@ -214,6 +221,31 @@ impl Display for Stmt {
                 }
                 Ok(())
             }
+            Stmt::While { test, block } => {
+                f.write_str("while (")?;
+                test.fmt(f)?;
+                f.write_str(") ")?;
+                block.fmt(f)
+            }
+            Stmt::Labeled(label, stmt) => {
+                f.write_str(&label)?;
+                f.write_str(": ")?;
+                stmt.fmt(f)
+            }
+            Stmt::Break(label) => {
+                f.write_str("break")?;
+                if let Some(label) = label {
+                    write!(f, " {}", label)?;
+                }
+                f.write_str(";\n")
+            }
+            Stmt::Continue(label) => {
+                f.write_str("continue")?;
+                if let Some(label) = label {
+                    write!(f, " {}", label)?;
+                }
+                f.write_str(";\n")
+            }
         }
     }
 }
@@ -224,7 +256,7 @@ impl From<ast::Stmt> for Stmt {
             ast::Stmt::Declaration(name, ty, expr) => {
                 Stmt::Declaration((name, ty).into(), expr.map(From::from))
             }
-            ast::Stmt::Assignment(name, expr) => Stmt::Assignment(name, expr.into()),
+            ast::Stmt::Assignment(place, expr) => Stmt::Assignment(place.into(), expr.into()),
             ast::Stmt::Return(expr) => Stmt::Return(expr.map(From::from)),
             ast::Stmt::Expr(expr) => Stmt::Expr(expr.into()),
             ast::Stmt::Block(block) => Stmt::Block(block.into()),
@@ -238,6 +270,14 @@ impl From<ast::Stmt> for Stmt {
                     .collect(),
                 tail: if_stmt.tail.map(From::from),
             },
+            ast::Stmt::While(test, block) => Stmt::While {
+                test: test.into(),
+                block: block.into(),
+            },
+            ast::Stmt::Labeled(label, stmt) => Stmt::Labeled(label, Box::new((*stmt).into())),
+            ast::Stmt::Break(label) => Stmt::Break(label),
+            ast::Stmt::Continue(label) => Stmt::Continue(label),
+            ast::Stmt::UntypedDeclaration => unreachable!(),
         }
     }
 }
@@ -250,6 +290,9 @@ pub enum Expr {
     Variable(String),
     Ref(Box<Expr>),
     Initializer(Vec<(String, Expr)>),
+    Call(Box<Expr>, Vec<Expr>),
+    Deref(Box<Expr>),
+    Field(Box<Expr>, String),
 }
 
 impl From<ast::Expr> for Expr {
@@ -265,10 +308,16 @@ impl From<ast::Expr> for Expr {
                     .map(|(name, expr)| (name, expr.into()))
                     .collect(),
             ),
-            ast::Expr::Paren(_) => todo!(),
             ast::Expr::Ref(expr) => Expr::Ref(Box::new((*expr).into())),
-            ast::Expr::Call(_, _) => todo!(),
+            ast::Expr::Call(fun, args) => Expr::Call(
+                Box::new((*fun).into()),
+                args.into_iter().map(From::from).collect(),
+            ),
+            ast::Expr::Deref(expr) => Expr::Deref(Box::new((*expr).into())),
+            ast::Expr::Field(expr, field) => Expr::Field(Box::new((*expr).into()), field),
             ast::Expr::Cast(_, _) => todo!(),
+            ast::Expr::Index(_, _) => todo!(),
+            ast::Expr::MethodCall => unreachable!(),
         }
     }
 }
@@ -287,6 +336,33 @@ impl Display for Expr {
                     write!(f, ".{} = {},", name, expr)?;
                 }
                 f.write_str("}")
+            }
+            Expr::Call(fun, args) => {
+                fun.fmt(f)?;
+                f.write_str("(")?;
+
+                let len = args.len();
+                for (i, arg) in args.iter().enumerate() {
+                    arg.fmt(f)?;
+                    if i < len - 1 {
+                        f.write_str(", ")?;
+                    }
+                }
+
+                f.write_str(")")
+            }
+            Expr::Deref(expr) => {
+                f.write_str("*")?;
+                expr.fmt(f)
+            }
+            Expr::Field(expr, field) => {
+                // TODO: this should be handled in codegen proper
+                match &**expr {
+                    Expr::Variable(ident) => ident.fmt(f)?,
+                    _ => write!(f, "({})", expr)?,
+                }
+                f.write_str(".")?;
+                f.write_str(field)
             }
         }
     }
@@ -311,7 +387,7 @@ impl Display for Type {
 impl From<ast::Type> for Type {
     fn from(ty: ast::Type) -> Self {
         match ty {
-            ast::Type::Path(ident) => Type { ident, pointer: 0 },
+            ast::Type::Ident(ident) => Type { ident, pointer: 0 },
             ast::Type::Ref(ty) => {
                 let mut ret: Self = (*ty).into();
                 ret.pointer += 1;
@@ -370,7 +446,7 @@ impl Display for Declarator {
 impl From<(String, ast::Type)> for Variable {
     fn from((ident, ty): (String, ast::Type)) -> Self {
         match ty {
-            ast::Type::Path(path) => {
+            ast::Type::Ident(path) => {
                 let decl = {
                     Declarator {
                         pointer: 0,
@@ -391,7 +467,10 @@ impl From<(String, ast::Type)> for Variable {
 }
 
 fn prelude() -> Vec<Declaration> {
-    let mut ret = vec![Declaration::Include(true, "stdint".to_string())];
+    let mut ret = vec![
+        Declaration::Include(true, "stdint".to_string()),
+        Declaration::Include(true, "stdbool".to_string()),
+    ];
 
     for (rust, c) in &[
         ("u32", "uint32_t"),

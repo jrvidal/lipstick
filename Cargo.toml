@@ -12,5 +12,7 @@ license = "GPL-3.0-or-later"
 lalrpop = "0.19.5"
 
 [dependencies]
+clap = "2.33.3"
 lalrpop-util = "0.19.5"
 regex = "1"
+tempfile = "3.2.0"
