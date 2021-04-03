@@ -278,6 +278,9 @@ impl From<ast::Stmt> for Stmt {
             ast::Stmt::Break(label) => Stmt::Break(label),
             ast::Stmt::Continue(label) => Stmt::Continue(label),
             ast::Stmt::UntypedDeclaration => unreachable!(),
+            ast::Stmt::Loop(_) => todo!(),
+            ast::Stmt::For { .. } => todo!(),
+            ast::Stmt::Match { .. } => todo!(),
         }
     }
 }
@@ -288,11 +291,14 @@ pub enum Expr {
     String(String),
     Boolean(bool),
     Variable(String),
+    Char(char),
+    Float(f64),
     Ref(Box<Expr>),
     Initializer(Vec<(String, Expr)>),
     Call(Box<Expr>, Vec<Expr>),
     Deref(Box<Expr>),
     Field(Box<Expr>, String),
+    Paren(Box<Expr>),
 }
 
 impl From<ast::Expr> for Expr {
@@ -301,6 +307,8 @@ impl From<ast::Expr> for Expr {
             ast::Expr::Integer(n) => Expr::Integer(n),
             ast::Expr::String(s) => Expr::String(s),
             ast::Expr::Boolean(b) => Expr::Boolean(b),
+            ast::Expr::Float(f) => Expr::Float(f),
+            ast::Expr::Char(c) => Expr::Char(c),
             ast::Expr::Variable(v) => Expr::Variable(v),
             ast::Expr::StructInit(_, fields) => Expr::Initializer(
                 fields
@@ -318,6 +326,8 @@ impl From<ast::Expr> for Expr {
             ast::Expr::Cast(_, _) => todo!(),
             ast::Expr::Index(_, _) => todo!(),
             ast::Expr::MethodCall => unreachable!(),
+            ast::Expr::Operator(_, _, _) => todo!(),
+            ast::Expr::Not(_) => todo!(),
         }
     }
 }
@@ -328,6 +338,8 @@ impl Display for Expr {
             Expr::Integer(n) => n.fmt(f),
             Expr::String(s) => write!(f, "\"{}\"", s),
             Expr::Boolean(b) => b.fmt(f),
+            Expr::Char(c) => write!(f, "'{}'", c),
+            Expr::Float(x) => x.fmt(f),
             Expr::Variable(ident) => ident.fmt(f),
             Expr::Ref(expr) => write!(f, "&{}", expr),
             Expr::Initializer(fields) => {
@@ -364,6 +376,7 @@ impl Display for Expr {
                 f.write_str(".")?;
                 f.write_str(field)
             }
+            Expr::Paren(expr) => write!(f, "({})", expr),
         }
     }
 }
@@ -473,6 +486,9 @@ fn prelude() -> Vec<Declaration> {
     ];
 
     for (rust, c) in &[
+        // TODO: Well, this is wishful thinking at best... Maybe add some static assertions?
+        ("f32", "float"),
+        ("f64", "double"),
         ("u32", "uint32_t"),
         ("i32", "int32_t"),
         ("u8", "uint8_t"),

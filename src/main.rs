@@ -82,3 +82,15 @@ fn compile(program: ast::Program) -> Result<codegen::Program, Error> {
     let compiled = codegen::transform(program);
     Ok(compiled)
 }
+
+#[test]
+fn fixture() {
+    let source = r#"
+        fn main() {
+            let x: u32 = &x as u64;
+        }
+    "#;
+    let program = grammar::ProgramParser::new().parse(&source).unwrap();
+
+    panic!("{:#?}", program);
+}

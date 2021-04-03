@@ -97,9 +97,32 @@ Stmt: Stmt = {
   <Block> => Stmt::Block(<>),
   <IfStmt> => Stmt::If(<>),
   "while" <IfValidExpr> <Block> => Stmt::While(<>),
+  "loop" <Block> => Stmt::Loop(<>),
   <label: Lifetime> ":" <stmt: Stmt> => Stmt::Labeled(label, stmt.into()),
   "break" <Lifetime?> ";" => Stmt::Break(<>),
   "continue" <Lifetime?> ";" => Stmt::Continue(<>),
+  "for" <var: Ident> "in" <start: IfValidExpr> <inclusive: RangeToken> <end: IfValidExpr> <block: Block> => Stmt::For {
+    var,
+    range: (start, end),
+    inclusive,
+    block,
+  },
+  "match" <value: IfValidExpr> "{" <arms: MatchArms> ","? "}" => Stmt::Match { value, arms, catch_all: None },
+  "match" <value: IfValidExpr> "{" <arms: MatchArms> "," "_" "=>" <catch_all: Block> ","? "}" => Stmt::Match { value, arms, catch_all: catch_all.into() }
+}
+
+MatchArms: Vec<(Expr, Block)> = {
+  <e: Expr> "=>" <b: Block> => vec![(e, b)],
+  <arms: MatchArms> "," <e: Expr> "=>" <b: Block> => {
+    let mut arms = arms;
+    arms.push((e, b));
+    arms
+  }
+}
+
+RangeToken: bool = {
+  ".." => false,
+  "..=" => true
 }
 
 IfStmt: IfStmt = {
@@ -131,28 +154,14 @@ IfValidExpr: Expr = {
 
 IndexExpr: Expr = {
   <arr: IndexExpr> "[" <index: IndexExpr> "]" => Expr::Index(arr.into(), index.into()),
-  RefExpr
-}
-
-RefExpr: Expr = {
-  "&" <RefExpr> => Expr::Ref(<>.into()),
   CallExpr
 }
+
 
 CallExpr: Expr = {
   <fun: CallExpr> "(" <args: ArgList> ","? ")" => Expr::Call(fun.into(), args),
   <CallExpr> "(" ")" => Expr::Call(<>.into(), vec![]),
   UnaryExpr
-}
-
-UnaryExpr: Expr = {
-  "*" <UnaryExpr> => Expr::Deref(<>.into()),
-  CastExpr
-}
-
-CastExpr: Expr = {
-  <expr: CastExpr> "as" <ty: Type> => Expr::Cast(expr.into(), ty),
-  AtomExpr,
 }
 
 ArgList: Vec<Expr> = {
@@ -164,11 +173,29 @@ ArgList: Vec<Expr> = {
   }
 }
 
+UnaryExpr: Expr = {
+  "&" <UnaryExpr> => Expr::Ref(<>.into()),
+  "*" <UnaryExpr> => Expr::Deref(<>.into()),
+  "!" <UnaryExpr> => Expr::Not(<>.into()),
+  CastExpr
+}
+
+CastExpr: Expr = {
+  <expr: CastExpr> "as" <ty: Type> => Expr::Cast(expr.into(), ty),
+  MulExpr,
+}
+
+MulExpr: Expr = {
+  AtomExpr
+}
+
 AtomExpr: Expr = {
   <Ident> => Expr::Variable(<>),
   <r"-?[0-9]+"> => Expr::Integer(i64::from_str(<>).unwrap()),
   // TODO: do well
   <r#""[^"]*""#> => Expr::String(<>.to_string()),
+  <r#"'[^']'"#> => Expr::Char(<>.chars().next().unwrap()),
+  <r#"-?[0-9]+\.[0-9]*"#> => Expr::Float(f64::from_str(<>).unwrap()),
   "true" => Expr::Boolean(true),
   "false" => Expr::Boolean(false),
   "(" <Expr> ")"  => <>

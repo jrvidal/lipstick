@@ -32,13 +32,18 @@ pub enum Stmt {
     Labeled(String, Box<Stmt>),
     Break(Option<String>),
     Continue(Option<String>),
-    // Switch,
-    // While,
-    // DoWhile,
-    // For,
-    // Goto,
-    // Continue,
-    // Break,
+    Loop(Block),
+    For {
+        var: String,
+        range: (Expr, Expr),
+        inclusive: bool,
+        block: Block,
+    },
+    Match {
+        value: Expr,
+        arms: Vec<(Expr, Block)>,
+        catch_all: Option<Block>,
+    }, // Goto,
 }
 
 #[derive(Debug)]
@@ -52,9 +57,12 @@ pub struct IfStmt {
 #[derive(Debug)]
 pub enum Expr {
     Integer(i64),
+    Float(f64),
     String(String),
     Boolean(bool),
     Variable(String),
+    Char(char),
+    // TODO: bytestrings, byte literals
     StructInit(String, Vec<(String, Expr)>),
     Ref(Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
@@ -62,7 +70,42 @@ pub enum Expr {
     Field(Box<Expr>, String),
     Index(Box<Expr>, Box<Expr>),
     Deref(Box<Expr>),
+    Operator(Box<Expr>, BinaryOp, Box<Expr>),
+    Not(Box<Expr>),
     MethodCall,
+    // TODO: if ternary
+}
+
+#[derive(Debug)]
+pub enum BinaryOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    BitAnd,
+    BitOr,
+    Xor,
+    LShift,
+    RShift,
+    AddAssign,
+    SubAssign,
+    MulAssign,
+    DivAssign,
+    RemAssign,
+    BitAndAssign,
+    BitOrAssign,
+    XorAssign,
+    LShiftAssign,
+    RShiftAssign,
+    Equal,
+    NotEqual,
+    Gt,
+    Lt,
+    Geq,
+    Leq,
+    And,
+    Or,
 }
 
 impl Expr {
@@ -74,7 +117,11 @@ impl Expr {
             | Expr::StructInit(_, _)
             | Expr::Ref(_)
             | Expr::MethodCall
+            | Expr::Float(_)
             | Expr::Cast(_, _)
+            | Expr::Char(_)
+            | Expr::Operator(_, _, _)
+            | Expr::Not(_)
             | Expr::Call(_, _) => false,
             Expr::Variable(_) => true,
             Expr::Field(expr, _) | Expr::Index(expr, _) | Expr::Deref(expr) => expr.is_place(),
@@ -117,7 +164,11 @@ pub mod visit {
     generate_visitor![Visit, node, visitor, [
         visit_program, Program, {
             for item in &node.0 {
-                match item {
+                visitor.visit_item(item);
+            }
+        };
+        visit_item, Item, {
+                match node {
                     Item::Function(sig, _ident, block) => {
                         visitor.visit_signature(sig);
                         visitor.visit_block(block);
@@ -129,7 +180,6 @@ pub mod visit {
                     },
                     Item::Use { .. } => {}
                 }
-            }
         };
         visit_signature, Signature, {
             for (_name, ty) in &node.args {
@@ -141,7 +191,7 @@ pub mod visit {
         };
         visit_block, Block, {
             for stmt in &node.statements {
-                visitor.visit_statement(stmt);
+                visitor.visit_stmt(stmt);
             }
         };
         visit_type, Type, {
@@ -162,7 +212,7 @@ pub mod visit {
                 },
             }
         };
-        visit_statement, Stmt, {
+        visit_stmt, Stmt, {
             match node {
                 Stmt::Declaration(_, ty, expr) => {
                     visitor.visit_type(ty);
@@ -181,7 +231,8 @@ pub mod visit {
                 Stmt::Expr(expr) => {
                     visitor.visit_expr(expr);
                 }
-                Stmt::Block(block) => {
+                Stmt::Block(block)
+                | Stmt::Loop(block) => {
                     visitor.visit_block(block);
                 }
                 Stmt::If(if_stmt) => {
@@ -201,7 +252,25 @@ pub mod visit {
                     visitor.visit_block(block);
                 }
                 Stmt::Labeled(_label, stmt) => {
-                    visitor.visit_statement(stmt);
+                    visitor.visit_stmt(stmt);
+                }
+                Stmt::Match { value, arms, catch_all } => {
+                    visitor.visit_expr(value);
+                    for (expr, block) in arms {
+                        visitor.visit_expr(expr);
+                        visitor.visit_block(block);
+                    }
+                    catch_all.iter().for_each(|block| visitor.visit_block(block));
+                }
+                Stmt::For {
+                    var: _var,
+                    range,
+                    block,
+                    inclusive: _inclusive
+                } => {
+                    visitor.visit_expr(&range.0);
+                    visitor.visit_expr(&range.1);
+                    visitor.visit_block(block);
                 }
                 Stmt::Break(_) |
                 Stmt::Continue(_) |
@@ -215,7 +284,6 @@ pub mod visit {
                         visitor.visit_expr(value);
                     }
                 }
-                Expr::Ref(expr) => visitor.visit_expr(expr),
                 Expr::Call(fun, args) => {
                     visitor.visit_expr(fun);
                     for arg in args {
@@ -233,10 +301,16 @@ pub mod visit {
                     visitor.visit_expr(arr);
                     visitor.visit_expr(index);
                 }
-                Expr::Deref(expr) => {
+                Expr::Ref(expr) | Expr::Deref(expr) | Expr::Not(expr) => {
                     visitor.visit_expr(expr);
                 }
+                Expr::Operator(left, _, right) => {
+                    visitor.visit_expr(left);
+                    visitor.visit_expr(right);
+                }
                 Expr::Integer(_) |
+                Expr::Float(_) |
+                Expr::Char(_) |
                 Expr::String(_) |
                 Expr::Boolean(_) |
                 Expr::Variable(_) |
