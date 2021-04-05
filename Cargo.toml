@@ -7,12 +7,9 @@ repository = "https://github.com/jrvidal/lipstick"
 description = "Lipstick for C"
 license = "GPL-3.0-or-later"
 
-
-[build-dependencies]
-lalrpop = "0.19.5"
-
 [dependencies]
 clap = "2.33.3"
-lalrpop-util = "0.19.5"
+proc-macro2 = { version = "1.0.26", features = ["span-locations"] }
 regex = "1"
+syn = { version = "1.0.67", default-features = false, features = ["full", "parsing", "printing"] }
 tempfile = "3.2.0"

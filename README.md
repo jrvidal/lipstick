@@ -2,6 +2,13 @@
 
 > You _can_ put lipstick on a pig
 
+## What
+`lipstick` compiles a subset of Rust's syntax into C. It's not a "Rust subset" though, since there's not borrow checker or lifetimes. It's simply a Rust-like syntax frontend for C.
+
+## Why
+Because it's fun, duh.
+
+Also, it might be a good teaching tool, so you can temporarily "turn off" the borrow checker and see what is to write in unsafe system languages, without actually having any C or C++ knowledge.
 
 ### Input
 ```rust
@@ -17,21 +24,6 @@ fn foo() -> &u32 {
 #include <stdint.h>
 #ifndef u32
 #define u32 uint32_t
-#endif
-#ifndef i32
-#define i32 int32_t
-#endif
-#ifndef u8
-#define u8 uint8_t
-#endif
-#ifndef i8
-#define i8 int8_t
-#endif
-#ifndef usize
-#define usize uintptr_t
-#endif
-#ifndef isize
-#define isize intptr_t
 #endif
 u32* foo() {
   u32 x = 7;
