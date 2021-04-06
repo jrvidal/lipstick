@@ -1,4 +1,4 @@
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenTree};
 use std::fmt::{self, Display};
 use syn::spanned::Spanned;
 
@@ -24,12 +24,6 @@ impl Display for CompilationError {
 }
 
 impl std::error::Error for CompilationError {}
-
-#[test]
-fn fixture() {
-    let file = syn::parse_file("#!foo\nfn foo() {}").unwrap();
-    panic!("{:?}", file.shebang.unwrap().span().end());
-}
 
 #[derive(Default)]
 struct Context {
@@ -62,7 +56,7 @@ impl Context {
         }
     }
 
-    fn transform_item(&mut self, item: &syn::Item, out: &mut Vec<Declaration>) {
+    fn transform_item(&mut self, item: &syn::Item, out: &mut Vec<Item>) {
         let mut fail = |msg: &str| self.fail(item, &format!("{} are not supported", msg));
         match item {
             syn::Item::Const(_) => fail("Const items"),
@@ -71,7 +65,71 @@ impl Context {
             syn::Item::Fn(item) => self.transform_fn(item, out),
             syn::Item::ForeignMod(_) => fail("Extern modules"),
             syn::Item::Impl(_) => fail("Impl blocks"),
-            syn::Item::Macro(_) => fail("Macros"),
+            syn::Item::Macro(syn::ItemMacro {
+                attrs,
+                ident,
+                mac,
+                semi_token: _,
+            }) => {
+                self.fail_attrs(attrs);
+                self.fail_opt(ident, "macro_rules-style macros are not supported");
+                let syn::Macro {
+                    path,
+                    bang_token: _,
+                    delimiter: _,
+                    tokens,
+                } = mac;
+                let ident = match path.get_ident() {
+                    Some(ident) => ident.to_string(),
+                    _ => {
+                        self.fail(path, "Paths are not supported");
+                        return;
+                    }
+                };
+
+                if ident != "include" {
+                    self.fail(item, "Unsupported macro");
+                }
+
+                const USAGE: &str =
+                    "include! can be invoked as `include!(file)` or `include!(<header>)`";
+
+                let tokens: Vec<_> = tokens.clone().into_iter().collect();
+                if tokens.len() != 1 && tokens.len() != 3 {
+                    self.fail(item, USAGE);
+                    return;
+                }
+
+                let header_token = if tokens.len() == 1 {
+                    &tokens[0]
+                } else {
+                    &tokens[1]
+                };
+
+                let header = match header_token {
+                    TokenTree::Ident(ident) => ident.to_string(),
+                    _ => {
+                        self.fail(item, USAGE);
+                        return;
+                    }
+                };
+
+                let is_char = |tt: &TokenTree, c| match tt {
+                    TokenTree::Punct(punct) => punct.as_char() == c,
+                    _ => false,
+                };
+
+                if tokens.len() == 3 {
+                    if is_char(&tokens[0], '<') && is_char(&tokens[2], '>') {
+                        // OK
+                    } else {
+                        self.fail(item, USAGE);
+                        return;
+                    }
+                }
+
+                out.push(Item::Include(tokens.len() == 3, header));
+            }
             syn::Item::Macro2(_) => fail("Macros"),
             syn::Item::Mod(_) => fail("Modules"),
             syn::Item::Static(_) => fail("Static items"),
@@ -118,8 +176,8 @@ impl Context {
                     self.fail(item, "Unit structs are not supported");
                 }
 
-                out.push(Declaration::StructTypedef(ident.to_string()));
-                out.push(Declaration::Struct(ident.to_string(), fields));
+                out.push(Item::StructTypedef(ident.to_string()));
+                out.push(Item::Struct(ident.to_string(), fields));
             }
             syn::Item::Trait(_) => fail("Traits"),
             syn::Item::TraitAlias(_) => fail("Trait aliases"),
@@ -131,7 +189,7 @@ impl Context {
         }
     }
 
-    fn transform_fn(&mut self, item: &syn::ItemFn, out: &mut Vec<Declaration>) {
+    fn transform_fn(&mut self, item: &syn::ItemFn, out: &mut Vec<Item>) {
         let syn::ItemFn {
             attrs,
             vis,
@@ -192,9 +250,9 @@ impl Context {
             args,
         };
 
-        let block = self.transform_block(item_block);
+        let block = self.transform_expr_block(item_block);
 
-        out.push(Declaration::Function(signature, block));
+        out.push(Item::Function(signature, block));
     }
 
     fn transform_type(&mut self, ty: &syn::Type) -> Type {
@@ -286,7 +344,7 @@ impl Context {
                 if let Some(ty_ident) = type_path.path.get_ident() {
                     let decl = Declarator {
                         pointer: 0,
-                        decl: DirectDeclarator::Ident(ident),
+                        ddecl: DirectDeclarator::Ident(ident),
                     };
                     return (ty_ident.to_string(), decl);
                 } else {
@@ -297,22 +355,9 @@ impl Context {
             syn::Type::Reference(ty_ref) => {
                 self.fail_opt(&ty_ref.lifetime, "Explicit lifetimes are not supported");
                 self.fail_opt(&ty_ref.mutability, "Mutable references are not supported");
-                match &*ty_ref.elem {
-                    syn::Type::Tuple(ty) if ty.elems.is_empty() => {
-                        return (
-                            "void".to_string(),
-                            Declarator {
-                                pointer: 1,
-                                decl: DirectDeclarator::Ident(ident),
-                            },
-                        );
-                    }
-                    ty => {
-                        let mut ret = self.transform_declarator(ident, ty);
-                        ret.1.pointer += 1;
-                        return ret;
-                    }
-                }
+                let mut ret = self.transform_declarator(ident, &*ty_ref.elem);
+                ret.1.pointer += 1;
+                return ret;
             }
             syn::Type::Slice(_) => { /* TODO: UNSUPPORTED */ }
             syn::Type::TraitObject(_) => { /* TODO: UNSUPPORTED */ }
@@ -321,19 +366,27 @@ impl Context {
             syn::Type::__TestExhaustive(_) => unreachable!(),
         }
 
-        let variable = Variable::fallback();
-        (variable.0, variable.1)
+        let declaration = Declaration::fallback();
+        (declaration.0, declaration.1)
     }
 
-    fn transform_block(&mut self, block: &syn::Block) -> Block {
+    fn transform_stmt_block(&mut self, block: &syn::Block) -> Block {
+        self.transform_block(block, false)
+    }
+
+    fn transform_expr_block(&mut self, block: &syn::Block) -> Block {
+        self.transform_block(block, true)
+    }
+
+    fn transform_block(&mut self, block: &syn::Block, expression: bool) -> Block {
         let mut statements = vec![];
-        for stmt in &block.stmts {
-            self.transform_stmt(stmt, &mut statements);
+        for stmt in block.stmts.iter() {
+            self.transform_stmt(stmt, expression, &mut statements);
         }
         Block(statements)
     }
 
-    fn transform_stmt(&mut self, stmt: &syn::Stmt, out: &mut Vec<Stmt>) {
+    fn transform_stmt(&mut self, stmt: &syn::Stmt, expression: bool, out: &mut Vec<Stmt>) {
         match stmt {
             syn::Stmt::Local(syn::Local {
                 attrs,
@@ -345,27 +398,32 @@ impl Context {
                 self.fail_attrs(attrs);
                 let expr = init.as_ref().map(|(_, expr)| self.transform_expr(&*expr));
 
-                let variable = match pat {
+                let declaration = match pat {
                     syn::Pat::Ident(_) => {
                         self.fail(stmt, "All local variables should have a type");
-                        Variable::fallback()
+                        Declaration::fallback()
                     }
                     syn::Pat::Type(pat_type) => self.transform_variable_declarator(pat_type).into(),
                     _ => {
                         self.fail(pat, "Patterns are not supported");
-                        Variable::fallback()
+                        Declaration::fallback()
                     }
                 };
 
-                out.push(Stmt::Declaration(variable, expr));
+                out.push(Stmt::Declaration(declaration, expr));
             }
             syn::Stmt::Item(_) => self.fail(stmt, "Nested items are not supported"),
             syn::Stmt::Expr(expr) => match expr {
                 syn::Expr::Block(_)
                 | syn::Expr::While(_)
                 | syn::Expr::If(_)
-                | syn::Expr::ForLoop(_) => self.transform_expr_stmt(expr, out),
-                _ => self.fail(expr, "Blocks as expressions are not supported"),
+                | syn::Expr::Match(_)
+                | syn::Expr::ForLoop(_)
+                | syn::Expr::Loop(_) => self.transform_expr_stmt(expr, out),
+                _ if expression => {
+                    out.push(Stmt::Return(Some(self.transform_expr(expr))));
+                }
+                _ => self.fail(stmt, "Blocks as expressions are not supported"),
             },
             syn::Stmt::Semi(expr, _) => self.transform_expr_stmt(expr, out),
         }
@@ -389,24 +447,32 @@ impl Context {
                 right,
             }) => {
                 self.fail_attrs(attrs);
-                // TODO: handle other places
-                if let syn::Expr::Path(expr_path) = &**left {
-                    if let Some(ident) = expr_path.path.get_ident() {
-                        out.push(Stmt::Assignment(
-                            Expr::Variable(ident.to_string()),
-                            self.transform_expr(&*right),
-                        ));
-                    }
-                }
+                // TODO: are all right exprs valid?
+                out.push(Stmt::Assignment(
+                    self.transform_expr(&*left),
+                    self.transform_expr(&*right),
+                ));
             }
-            syn::Expr::AssignOp(_) => {}
+            syn::Expr::AssignOp(syn::ExprAssignOp {
+                attrs,
+                left,
+                op,
+                right,
+            }) => {
+                self.fail_attrs(attrs);
+                out.push(Stmt::AssignmentOp(
+                    self.transform_expr(left),
+                    op.into(),
+                    self.transform_expr(right),
+                ));
+            }
             syn::Expr::Block(syn::ExprBlock {
                 attrs,
                 label,
                 block: expr_block,
             }) => {
                 self.fail_attrs(attrs);
-                let block = self.transform_block(expr_block);
+                let block = self.transform_stmt_block(expr_block);
                 let stmt = Stmt::Block(block);
                 match label {
                     Some(label) => {
@@ -427,10 +493,76 @@ impl Context {
                 self.fail_opt(expr, "Break values are not supported");
                 push![self, state, out; Stmt::Break(label.as_ref().map(|lf| lf.to_string()))];
             }
-            syn::Expr::Call(_) => {}
-            syn::Expr::Cast(_) => {}
-            syn::Expr::Continue(_) => {}
-            syn::Expr::ForLoop(_) => {}
+            syn::Expr::Continue(syn::ExprContinue {
+                attrs,
+                continue_token: _,
+                label,
+            }) => {
+                self.fail_attrs(attrs);
+                out.push(Stmt::Continue(
+                    label.as_ref().map(|lf| lf.ident.to_string()),
+                ));
+            }
+            syn::Expr::ForLoop(syn::ExprForLoop {
+                attrs,
+                label,
+                for_token: _,
+                pat,
+                in_token: _,
+                expr: range_expr,
+                body,
+            }) => {
+                self.fail_attrs(attrs);
+                let ident = match pat {
+                    syn::Pat::Ident(pat) => pat.ident.to_string(),
+                    _ => {
+                        self.fail(pat, "Patterns are not supported");
+                        return;
+                    }
+                };
+
+                let (from, limits, to) = match &**range_expr {
+                    syn::Expr::Range(syn::ExprRange {
+                        attrs,
+                        from,
+                        limits,
+                        to,
+                    }) => {
+                        self.fail_attrs(attrs);
+                        (from, limits, to)
+                    }
+                    _ => {
+                        self.fail(expr, "For loops only support range iteration");
+                        return;
+                    }
+                };
+
+                let inclusive = std::matches!(limits, syn::RangeLimits::Closed(_));
+
+                let (start, end) = match (from, to) {
+                    (Some(from), Some(to)) => (self.transform_expr(from), self.transform_expr(to)),
+                    _ => {
+                        self.fail(
+                            expr,
+                            "For loops only support range iteration with declared start and end",
+                        );
+                        return;
+                    }
+                };
+
+                let for_loop = Stmt::For {
+                    ident,
+                    inclusive,
+                    range: (start, end),
+                    block: self.transform_stmt_block(body),
+                };
+
+                if let Some(label) = label {
+                    out.push(Stmt::Labeled(label.name.to_string(), for_loop.into()));
+                } else {
+                    out.push(for_loop);
+                }
+            }
             syn::Expr::If(syn::ExprIf {
                 attrs,
                 if_token: _,
@@ -440,7 +572,7 @@ impl Context {
             }) => {
                 self.fail_attrs(attrs);
                 let test = self.transform_expr(cond);
-                let then = self.transform_block(then_branch);
+                let then = self.transform_stmt_block(then_branch);
                 let mut alts = vec![];
                 let mut tail = None;
 
@@ -450,12 +582,12 @@ impl Context {
                         syn::Expr::If(expr) => {
                             alts.push((
                                 self.transform_expr(&*expr.cond),
-                                self.transform_block(&expr.then_branch),
+                                self.transform_stmt_block(&expr.then_branch),
                             ));
                             opt_branch = expr.else_branch.as_ref().map(|(_, b)| &**b);
                         }
                         syn::Expr::Block(expr) => {
-                            tail = Some(self.transform_block(&expr.block));
+                            tail = Some(self.transform_stmt_block(&expr.block));
                             break;
                         }
                         _ => unreachable!(),
@@ -471,10 +603,27 @@ impl Context {
                     }
                 ];
             }
-            syn::Expr::Loop(_) => {}
-            syn::Expr::MethodCall(_) => {
-                self.fail(expr, "Method calls are not supported");
+            syn::Expr::Loop(syn::ExprLoop {
+                attrs,
+                label,
+                loop_token: _,
+                body,
+            }) => {
+                self.fail_attrs(attrs);
+
+                let block = self.transform_stmt_block(body);
+                let while_stmt = Stmt::While {
+                    test: Expr::Integer(1),
+                    block,
+                };
+
+                if let Some(label) = label {
+                    push![self, state, out ; Stmt::Labeled(label.name.to_string(), while_stmt.into())];
+                } else {
+                    push![self, state, out ; while_stmt];
+                }
             }
+            syn::Expr::Match(_) => {}
             syn::Expr::Return(syn::ExprReturn {
                 attrs,
                 return_token: _,
@@ -483,12 +632,7 @@ impl Context {
                 self.fail_attrs(attrs);
                 let expr = syn_expr.as_ref().map(|expr| self.transform_expr(expr));
 
-                match expr {
-                    // TODO: handle initializer
-                    _ => {
-                        push![self, state, out ; Stmt::Return(expr)]
-                    }
-                }
+                push![self, state, out ; Stmt::Return(expr)]
             }
             syn::Expr::While(syn::ExprWhile {
                 attrs,
@@ -500,7 +644,7 @@ impl Context {
                 self.fail_attrs(attrs);
 
                 let test = self.transform_expr(cond);
-                let block = self.transform_block(body);
+                let block = self.transform_stmt_block(body);
                 let while_stmt = Stmt::While { test, block };
 
                 if let Some(label) = label {
@@ -518,13 +662,15 @@ impl Context {
             | syn::Expr::Await(_)
             | syn::Expr::Binary(_)
             | syn::Expr::Box(_)
+            | syn::Expr::Call(_)
+            | syn::Expr::Cast(_)
             | syn::Expr::Closure(_)
             | syn::Expr::Field(_)
             | syn::Expr::Index(_)
             | syn::Expr::Let(_)
             | syn::Expr::Lit(_)
             | syn::Expr::Macro(_)
-            | syn::Expr::Match(_)
+            | syn::Expr::MethodCall(_)
             | syn::Expr::Path(_)
             | syn::Expr::Range(_)
             | syn::Expr::Reference(_)
@@ -546,14 +692,24 @@ impl Context {
     fn transform_expr(&mut self, expr: &syn::Expr) -> Expr {
         match expr {
             syn::Expr::Array(_) => todo!(),
-            syn::Expr::Assign(_) => todo!(),
             syn::Expr::AssignOp(_) => todo!(),
             syn::Expr::Async(_) => todo!(),
             syn::Expr::Await(_) => self.fail(expr, "Await expressions are not supported"),
-            syn::Expr::Binary(_) => todo!(),
-            syn::Expr::Block(_) => todo!(),
+            syn::Expr::Binary(syn::ExprBinary {
+                attrs,
+                left,
+                op,
+                right,
+            }) => {
+                self.fail_attrs(attrs);
+                let bin_op = BinOp::from(op);
+                return Expr::Binary(
+                    self.transform_expr(left).into(),
+                    bin_op,
+                    self.transform_expr(right).into(),
+                );
+            }
             syn::Expr::Box(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Expr::Break(_) => todo!(),
             syn::Expr::Call(syn::ExprCall {
                 attrs,
                 func,
@@ -566,14 +722,88 @@ impl Context {
                     args.iter().map(|arg| self.transform_expr(arg)).collect(),
                 );
             }
-            syn::Expr::Cast(_) => todo!(),
+            syn::Expr::Cast(syn::ExprCast {
+                attrs,
+                expr,
+                as_token: _,
+                ty,
+            }) => {
+                self.fail_attrs(attrs);
+                return Expr::Cast(self.transform_type(ty), self.transform_expr(expr).into());
+            }
             syn::Expr::Closure(_) => todo!(),
-            syn::Expr::Continue(_) => todo!(),
-            syn::Expr::Field(_) => todo!(),
-            syn::Expr::ForLoop(_) => todo!(),
+            syn::Expr::Field(syn::ExprField {
+                attrs,
+                base,
+                dot_token: _,
+                member,
+            }) => {
+                self.fail_attrs(attrs);
+                let ident = match member {
+                    syn::Member::Named(field) => field.to_string(),
+                    syn::Member::Unnamed(_) => {
+                        self.fail(expr, "Tuple structs are not supported");
+                        return Expr::fallback();
+                    }
+                };
+                // TODO: parens?
+                return Expr::Field(self.transform_expr(&*base).into(), ident);
+            }
             syn::Expr::Group(_) => todo!(),
-            syn::Expr::If(_) => todo!(),
-            syn::Expr::Index(_) => todo!(),
+            syn::Expr::If(syn::ExprIf {
+                attrs,
+                if_token: _,
+                cond,
+                then_branch,
+                else_branch,
+            }) => {
+                self.fail_attrs(attrs);
+                let then_expr = match then_branch.stmts.get(0) {
+                    Some(syn::Stmt::Expr(expr)) if then_branch.stmts.len() == 1 => expr,
+                    _ => {
+                        self.fail(expr, "Invalid ternary");
+                        return Expr::fallback();
+                    }
+                };
+
+                let else_expr = match else_branch
+                    .as_ref()
+                    .map(|(_, b)| &**b)
+                    .and_then(|expr| match expr {
+                        syn::Expr::Block(b) => Some(&b.block),
+                        _ => None,
+                    })
+                    .filter(|block| block.stmts.len() == 1)
+                    .map(|block| &block.stmts[0])
+                    .and_then(|stmt| match stmt {
+                        syn::Stmt::Expr(expr) => Some(expr),
+                        _ => None,
+                    }) {
+                    Some(expr) => expr,
+                    _ => {
+                        self.fail(expr, "Invalid ternary");
+                        return Expr::fallback();
+                    }
+                };
+
+                return Expr::Ternary(
+                    self.transform_expr(cond).into(),
+                    self.transform_expr(then_expr).into(),
+                    self.transform_expr(else_expr).into(),
+                );
+            }
+            syn::Expr::Index(syn::ExprIndex {
+                attrs,
+                expr,
+                bracket_token: _,
+                index,
+            }) => {
+                self.fail_attrs(attrs);
+                return Expr::Index(
+                    self.transform_expr(&*expr).into(),
+                    self.transform_expr(&*index).into(),
+                );
+            }
             syn::Expr::Let(_) => todo!(),
             syn::Expr::Lit(expr_lit) => {
                 self.fail_attrs(&expr_lit.attrs);
@@ -594,10 +824,10 @@ impl Context {
                     syn::Lit::Verbatim(_) => self.fail(expr, "Unsupported expr"),
                 }
             }
-            syn::Expr::Loop(_) => todo!(),
             syn::Expr::Macro(_) => todo!(),
-            syn::Expr::Match(_) => todo!(),
-            syn::Expr::MethodCall(_) => todo!(),
+            syn::Expr::MethodCall(_) => {
+                self.fail(expr, "Method calls are not supported");
+            }
             syn::Expr::Paren(expr) => {
                 if !self.fail_attrs(&expr.attrs) {
                     return Expr::Paren(self.transform_expr(&expr.expr).into());
@@ -627,7 +857,6 @@ impl Context {
                 };
             }
             syn::Expr::Repeat(_) => todo!(),
-            syn::Expr::Return(_) => todo!(),
             syn::Expr::Struct(syn::ExprStruct {
                 attrs,
                 path,
@@ -638,8 +867,8 @@ impl Context {
             }) => {
                 self.fail_attrs(attrs);
                 self.fail_opt(rest, "Rest functional updates are not supported");
-                // TODO: do something with this
-                let _ident = match path.get_ident() {
+
+                let ident = match path.get_ident() {
                     Some(ident) => ident.to_string(),
                     _ => {
                         self.fail(expr, "Paths are not supported");
@@ -669,18 +898,37 @@ impl Context {
                     fields.push((field_ident, self.transform_expr(expr)));
                 }
 
-                return Expr::Initializer(fields);
+                return Expr::Cast(Type { pointer: 0, ident }, Expr::StructInit(fields).into());
             }
             syn::Expr::Try(_) => todo!(),
             syn::Expr::TryBlock(_) => todo!(),
             syn::Expr::Tuple(_) => todo!(),
             syn::Expr::Type(_) => todo!(),
-            syn::Expr::Unary(_) => todo!(),
+            syn::Expr::Unary(syn::ExprUnary { attrs, op, expr }) => {
+                self.fail_attrs(attrs);
+                let expr = self.transform_expr(expr);
+                return match op {
+                    syn::UnOp::Deref(_) => Expr::Deref(expr.into()),
+                    syn::UnOp::Not(_) => Expr::Not(expr.into()),
+                    syn::UnOp::Neg(_) => Expr::Neg(expr.into()),
+                };
+            }
             syn::Expr::Unsafe(_) => todo!(),
             syn::Expr::Verbatim(_) => todo!(),
-            syn::Expr::While(_) => todo!(),
             syn::Expr::Yield(_) => todo!(),
             syn::Expr::__TestExhaustive(_) => unreachable!(),
+
+            syn::Expr::Assign(_)
+            | syn::Expr::Block(_)
+            | syn::Expr::ForLoop(_)
+            | syn::Expr::Return(_)
+            | syn::Expr::Continue(_)
+            | syn::Expr::Break(_)
+            | syn::Expr::Match(_)
+            | syn::Expr::Loop(_)
+            | syn::Expr::While(_) => {
+                self.fail(expr, "Statement cannot be used as expression");
+            }
         }
 
         Expr::fallback()
@@ -745,7 +993,7 @@ pub fn transform(file: &syn::File) -> std::result::Result<Program, CompilationEr
 }
 
 #[derive(Debug)]
-pub struct Program(pub Vec<Declaration>);
+pub struct Program(pub Vec<Item>);
 
 impl Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -758,22 +1006,22 @@ impl Display for Program {
 }
 
 #[derive(Debug)]
-pub enum Declaration {
+pub enum Item {
     Function(Signature, Block),
     Include(bool, String),
     StructTypedef(String),
-    Struct(String, Vec<Variable>),
+    Struct(String, Vec<Declaration>),
     Ifndef(String, String),
 }
 
-impl Display for Declaration {
+impl Display for Item {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Declaration::Function(sig, block) => {
+            Item::Function(sig, block) => {
                 sig.fmt(f)?;
                 block.fmt(f)?;
             }
-            Declaration::Include(root, header) => {
+            Item::Include(root, header) => {
                 f.write_str("#include ")?;
                 if *root {
                     writeln!(f, "<{}.h>", header)?;
@@ -781,17 +1029,17 @@ impl Display for Declaration {
                     writeln!(f, "\"{}.h\"", header)?;
                 }
             }
-            Declaration::StructTypedef(name) => {
+            Item::StructTypedef(name) => {
                 writeln!(f, "typedef struct {name} {name};", name = name)?;
             }
-            Declaration::Struct(name, fields) => {
+            Item::Struct(name, fields) => {
                 writeln!(f, "struct {} {{", name)?;
-                for Variable(ty, decl) in fields {
+                for Declaration(ty, decl) in fields {
                     writeln!(f, "  {ty} {decl};", ty = ty, decl = decl)?;
                 }
                 f.write_str("};\n")?;
             }
-            Declaration::Ifndef(name, value) => {
+            Item::Ifndef(name, value) => {
                 writeln!(f, "#ifndef {}", name)?;
                 writeln!(f, "#define {} {}", name, value)?;
                 f.write_str("#endif\n")?;
@@ -828,32 +1076,8 @@ impl Display for Signature {
     }
 }
 
-// impl From<(String, ast::Signature)> for Signature {
-//     fn from((name, sig): (String, ast::Signature)) -> Self {
-//         let ret = sig.ret.map(From::from).unwrap_or_else(|| Type {
-//             ident: "void".to_string(),
-//             pointer: 0,
-//         });
-
-//         let args: Vec<_> = sig
-//             .args
-//             .into_iter()
-//             .map(Variable::from)
-//             .map(|var| (var.0, var.1))
-//             .collect();
-
-//         Signature { name, ret, args }
-//     }
-// }
-
 #[derive(Debug)]
 pub struct Block(pub Vec<Stmt>);
-
-// impl From<ast::Block> for Block {
-//     fn from(block: ast::Block) -> Self {
-//         Block(block.statements.into_iter().map(From::from).collect())
-//     }
-// }
 
 impl Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -868,8 +1092,9 @@ impl Display for Block {
 
 #[derive(Debug)]
 pub enum Stmt {
-    Declaration(Variable, Option<Expr>),
+    Declaration(Declaration, Option<Expr>),
     Assignment(Expr, Expr),
+    AssignmentOp(Expr, BinOp, Expr),
     Block(Block),
     Return(Option<Expr>),
     Expr(Expr),
@@ -883,6 +1108,12 @@ pub enum Stmt {
         test: Expr,
         block: Block,
     },
+    For {
+        ident: String,
+        inclusive: bool,
+        range: (Expr, Expr),
+        block: Block,
+    },
     Labeled(String, Box<Stmt>),
     Break(Option<String>),
     Continue(Option<String>),
@@ -891,14 +1122,15 @@ pub enum Stmt {
 impl Display for Stmt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Stmt::Declaration(Variable(ty, decl), value) => {
+            Stmt::Declaration(Declaration(ty, decl), value) => {
                 write!(f, "{} {}", ty, decl)?;
                 if let Some(value) = value {
                     write!(f, " = {}", value)?;
                 }
                 f.write_str(";\n")
             }
-            Stmt::Assignment(ident, expr) => writeln!(f, "{} = {};", ident, expr),
+            Stmt::Assignment(left, right) => writeln!(f, "{} = {};", left, right),
+            Stmt::AssignmentOp(left, op, right) => writeln!(f, "{} {} {};", left, op, right),
             Stmt::Block(block) => block.fmt(f),
             Stmt::Return(expr) => {
                 f.write_str("return")?;
@@ -956,44 +1188,26 @@ impl Display for Stmt {
                 }
                 f.write_str(";\n")
             }
+            Stmt::For {
+                ident,
+                inclusive,
+                range,
+                block,
+            } => {
+                let op = if *inclusive { "<=" } else { "<" };
+                writeln!(
+                    f,
+                    "for (usize {ident} = {start}; {ident} {op} {end}; {ident}++) ",
+                    ident = ident,
+                    op = op,
+                    start = range.0,
+                    end = range.1
+                )?;
+                block.fmt(f)
+            }
         }
     }
 }
-
-// impl From<ast::Stmt> for Stmt {
-//     fn from(stmt: ast::Stmt) -> Self {
-//         match stmt {
-//             ast::Stmt::Declaration(name, ty, expr) => {
-//                 Stmt::Declaration((name, ty).into(), expr.map(From::from))
-//             }
-//             ast::Stmt::Assignment(place, expr) => Stmt::Assignment(place.into(), expr.into()),
-//             ast::Stmt::Return(expr) => Stmt::Return(expr.map(From::from)),
-//             ast::Stmt::Expr(expr) => Stmt::Expr(expr.into()),
-//             ast::Stmt::Block(block) => Stmt::Block(block.into()),
-//             ast::Stmt::If(if_stmt) => Stmt::If {
-//                 test: if_stmt.test.into(),
-//                 then: if_stmt.then.into(),
-//                 alts: if_stmt
-//                     .alts
-//                     .into_iter()
-//                     .map(|(expr, block)| (expr.into(), block.into()))
-//                     .collect(),
-//                 tail: if_stmt.tail.map(From::from),
-//             },
-//             ast::Stmt::While(test, block) => Stmt::While {
-//                 test: test.into(),
-//                 block: block.into(),
-//             },
-//             ast::Stmt::Labeled(label, stmt) => Stmt::Labeled(label, Box::new((*stmt).into())),
-//             ast::Stmt::Break(label) => Stmt::Break(label),
-//             ast::Stmt::Continue(label) => Stmt::Continue(label),
-//             ast::Stmt::UntypedDeclaration => unreachable!(),
-//             ast::Stmt::Loop(_) => todo!(),
-//             ast::Stmt::For { .. } => todo!(),
-//             ast::Stmt::Match { .. } => todo!(),
-//         }
-//     }
-// }
 
 #[derive(Debug)]
 pub enum Expr {
@@ -1004,11 +1218,17 @@ pub enum Expr {
     Char(char),
     Float(f64),
     Ref(Box<Expr>),
-    Initializer(Vec<(String, Expr)>),
+    StructInit(Vec<(String, Expr)>),
     Call(Box<Expr>, Vec<Expr>),
     Deref(Box<Expr>),
+    Not(Box<Expr>),
+    Neg(Box<Expr>),
     Field(Box<Expr>, String),
     Paren(Box<Expr>),
+    Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
+    Cast(Type, Box<Expr>),
+    Binary(Box<Expr>, BinOp, Box<Expr>),
+    Index(Box<Expr>, Box<Expr>),
 }
 
 impl Expr {
@@ -1017,48 +1237,121 @@ impl Expr {
     }
 }
 
-// impl From<ast::Expr> for Expr {
-//     fn from(expr: ast::Expr) -> Self {
-//         match expr {
-//             ast::Expr::Integer(n) => Expr::Integer(n),
-//             ast::Expr::String(s) => Expr::String(s),
-//             ast::Expr::Boolean(b) => Expr::Boolean(b),
-//             ast::Expr::Float(f) => Expr::Float(f),
-//             ast::Expr::Char(c) => Expr::Char(c),
-//             ast::Expr::Variable(v) => Expr::Variable(v),
-//             ast::Expr::StructInit(_, fields) => Expr::Initializer(
-//                 fields
-//                     .into_iter()
-//                     .map(|(name, expr)| (name, expr.into()))
-//                     .collect(),
-//             ),
-//             ast::Expr::Ref(expr) => Expr::Ref(Box::new((*expr).into())),
-//             ast::Expr::Call(fun, args) => Expr::Call(
-//                 Box::new((*fun).into()),
-//                 args.into_iter().map(From::from).collect(),
-//             ),
-//             ast::Expr::Deref(expr) => Expr::Deref(Box::new((*expr).into())),
-//             ast::Expr::Field(expr, field) => Expr::Field(Box::new((*expr).into()), field),
-//             ast::Expr::Cast(_, _) => todo!(),
-//             ast::Expr::Index(_, _) => todo!(),
-//             ast::Expr::MethodCall => unreachable!(),
-//             ast::Expr::Operator(_, _, _) => todo!(),
-//             ast::Expr::Not(_) => todo!(),
-//         }
-//     }
-// }
+#[derive(Debug)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    And,
+    Or,
+    BitXor,
+    BitAnd,
+    BitOr,
+    Shl,
+    Shr,
+    Eq,
+    Lt,
+    Le,
+    Ne,
+    Ge,
+    Gt,
+    AddEq,
+    SubEq,
+    MulEq,
+    DivEq,
+    RemEq,
+    BitXorEq,
+    BitAndEq,
+    BitOrEq,
+    ShlEq,
+    ShrEq,
+}
+
+impl<'a> From<&'a syn::BinOp> for BinOp {
+    fn from(op: &'a syn::BinOp) -> Self {
+        match op {
+            syn::BinOp::Add(_) => BinOp::Add,
+            syn::BinOp::Sub(_) => BinOp::Sub,
+            syn::BinOp::Mul(_) => BinOp::Mul,
+            syn::BinOp::Div(_) => BinOp::Div,
+            syn::BinOp::Rem(_) => BinOp::Rem,
+            syn::BinOp::And(_) => BinOp::And,
+            syn::BinOp::Or(_) => BinOp::Or,
+            syn::BinOp::BitXor(_) => BinOp::BitXor,
+            syn::BinOp::BitAnd(_) => BinOp::BitAnd,
+            syn::BinOp::BitOr(_) => BinOp::BitOr,
+            syn::BinOp::Shl(_) => BinOp::Shl,
+            syn::BinOp::Shr(_) => BinOp::Shr,
+            syn::BinOp::Eq(_) => BinOp::Eq,
+            syn::BinOp::Lt(_) => BinOp::Lt,
+            syn::BinOp::Le(_) => BinOp::Le,
+            syn::BinOp::Ne(_) => BinOp::Ne,
+            syn::BinOp::Ge(_) => BinOp::Ge,
+            syn::BinOp::Gt(_) => BinOp::Gt,
+            syn::BinOp::AddEq(_) => BinOp::AddEq,
+            syn::BinOp::SubEq(_) => BinOp::SubEq,
+            syn::BinOp::MulEq(_) => BinOp::MulEq,
+            syn::BinOp::DivEq(_) => BinOp::DivEq,
+            syn::BinOp::RemEq(_) => BinOp::RemEq,
+            syn::BinOp::BitXorEq(_) => BinOp::BitXorEq,
+            syn::BinOp::BitAndEq(_) => BinOp::BitAndEq,
+            syn::BinOp::BitOrEq(_) => BinOp::BitOrEq,
+            syn::BinOp::ShlEq(_) => BinOp::ShlEq,
+            syn::BinOp::ShrEq(_) => BinOp::ShrEq,
+        }
+    }
+}
+
+impl Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Rem => "%",
+            BinOp::And => "&&",
+            BinOp::Or => "||",
+            BinOp::BitXor => "^",
+            BinOp::BitAnd => "&",
+            BinOp::BitOr => "|",
+            BinOp::Shl => "<<",
+            BinOp::Shr => ">>",
+            BinOp::Eq => "==",
+            BinOp::Lt => "<",
+            BinOp::Le => "<=",
+            BinOp::Ne => "!=",
+            BinOp::Ge => ">",
+            BinOp::Gt => ">=",
+            BinOp::AddEq => "+=",
+            BinOp::SubEq => "-=",
+            BinOp::MulEq => "*=",
+            BinOp::DivEq => "/=",
+            BinOp::RemEq => "%=",
+            BinOp::BitXorEq => "^=",
+            BinOp::BitAndEq => "&=",
+            BinOp::BitOrEq => "|=",
+            BinOp::ShlEq => "<<=",
+            BinOp::ShrEq => ">>=",
+        };
+
+        f.write_str(s)
+    }
+}
 
 impl Display for Expr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Expr::Integer(n) => n.fmt(f),
-            Expr::String(s) => write!(f, "\"{}\"", s),
+            Expr::String(s) => write!(f, "{:?}", s),
             Expr::Boolean(b) => b.fmt(f),
             Expr::Char(c) => write!(f, "'{}'", c),
             Expr::Float(x) => x.fmt(f),
             Expr::Variable(ident) => ident.fmt(f),
             Expr::Ref(expr) => write!(f, "&{}", expr),
-            Expr::Initializer(fields) => {
+            Expr::StructInit(fields) => {
                 f.write_str("{")?;
                 for (name, expr) in fields {
                     write!(f, ".{} = {},", name, expr)?;
@@ -1083,6 +1376,14 @@ impl Display for Expr {
                 f.write_str("*")?;
                 expr.fmt(f)
             }
+            Expr::Not(expr) => {
+                f.write_str("!")?;
+                expr.fmt(f)
+            }
+            Expr::Neg(expr) => {
+                f.write_str("~")?;
+                expr.fmt(f)
+            }
             Expr::Field(expr, field) => {
                 // TODO: this should be handled in codegen proper
                 match &**expr {
@@ -1093,6 +1394,17 @@ impl Display for Expr {
                 f.write_str(field)
             }
             Expr::Paren(expr) => write!(f, "({})", expr),
+            Expr::Ternary(test, then, else_) => write!(f, "{} ? {} : {}", test, then, else_),
+            Expr::Cast(ty, expr) => {
+                write!(f, "({}) {}", ty, expr)
+            }
+            Expr::Binary(right, op, left) => {
+                // TODO: precedence
+                write!(f, "{} {} {}", right, op, left)
+            }
+            Expr::Index(expr, index) => {
+                write!(f, "{}[{}]", expr, index)
+            }
         }
     }
 }
@@ -1113,47 +1425,32 @@ impl Display for Type {
     }
 }
 
-// impl From<ast::Type> for Type {
-//     fn from(ty: ast::Type) -> Self {
-//         match ty {
-//             ast::Type::Ident(ident) => Type { ident, pointer: 0 },
-//             ast::Type::Ref(ty) => {
-//                 let mut ret: Self = (*ty).into();
-//                 ret.pointer += 1;
-//                 ret
-//             }
-//             ast::Type::Fun(_, _) => todo!(),
-//             ast::Type::Array(_, _) => todo!(),
-//         }
-//     }
-// }
-
 #[derive(Debug)]
-pub struct Variable(pub String, pub Declarator);
+pub struct Declaration(pub String, pub Declarator);
 
-impl Variable {
+impl Declaration {
     fn fallback() -> Self {
-        Variable("u32".to_string(), Declarator::fallback())
+        Declaration("u32".to_string(), Declarator::fallback())
     }
 }
 
-impl From<(String, Declarator)> for Variable {
+impl From<(String, Declarator)> for Declaration {
     fn from((ident, decl): (String, Declarator)) -> Self {
-        Variable(ident, decl)
+        Declaration(ident, decl)
     }
 }
 
 #[derive(Debug)]
 pub struct Declarator {
     pointer: u8,
-    decl: DirectDeclarator,
+    ddecl: DirectDeclarator,
 }
 
 impl Declarator {
     fn fallback() -> Self {
         Declarator {
             pointer: 0,
-            decl: DirectDeclarator::Ident("fallback__".to_string()),
+            ddecl: DirectDeclarator::Ident("fallback__".to_string()),
         }
     }
 }
@@ -1168,13 +1465,13 @@ pub enum DirectDeclarator {
 
 impl Display for Declarator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Declarator { pointer, decl } = self;
+        let Declarator { pointer, ddecl } = self;
 
         for _ in 0..*pointer {
             f.write_str("*")?;
         }
 
-        match decl {
+        match ddecl {
             DirectDeclarator::Ident(ident) => f.write_str(ident)?,
             DirectDeclarator::Paren(decl) => {
                 write!(f, "({})", decl)?;
@@ -1187,33 +1484,10 @@ impl Display for Declarator {
     }
 }
 
-// impl From<(String, ast::Type)> for Variable {
-//     fn from((ident, ty): (String, ast::Type)) -> Self {
-//         match ty {
-//             ast::Type::Ident(path) => {
-//                 let decl = {
-//                     Declarator {
-//                         pointer: 0,
-//                         decl: DirectDeclarator::Ident(ident),
-//                     }
-//                 };
-//                 (path, decl).into()
-//             }
-//             ast::Type::Ref(ty) => {
-//                 let mut variable: Variable = (ident, *ty).into();
-//                 variable.1.pointer += 1;
-//                 variable
-//             }
-//             ast::Type::Fun(_, _) => todo!(),
-//             ast::Type::Array(_, _) => todo!(),
-//         }
-//     }
-// }
-
-fn prelude() -> Vec<Declaration> {
+fn prelude() -> Vec<Item> {
     let mut ret = vec![
-        Declaration::Include(true, "stdint".to_string()),
-        Declaration::Include(true, "stdbool".to_string()),
+        Item::Include(true, "stdint".to_string()),
+        Item::Include(true, "stdbool".to_string()),
     ];
 
     for (rust, c) in &[
@@ -1227,7 +1501,7 @@ fn prelude() -> Vec<Declaration> {
         ("usize", "uintptr_t"),
         ("isize", "intptr_t"),
     ] {
-        ret.push(Declaration::Ifndef(rust.to_string(), c.to_string()));
+        ret.push(Item::Ifndef(rust.to_string(), c.to_string()));
     }
     ret
 }
