@@ -4,18 +4,18 @@ use syn::spanned::Spanned;
 
 #[derive(Debug)]
 pub struct Error {
-    span: Span,
-    msg: String,
+    pub span: Span,
+    pub msg: String,
 }
 
 #[derive(Debug)]
 pub struct CompilationError {
-    errors: Vec<Error>,
+    pub diagnostics: Vec<Error>,
 }
 
 impl Display for CompilationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for error in &self.errors {
+        for error in &self.diagnostics {
             writeln!(f, "Error: {} ({:?})", error.msg, error.span)?;
         }
 
@@ -51,7 +51,7 @@ impl Context {
             Ok(Program(decls))
         } else {
             Err(CompilationError {
-                errors: self.errors,
+                diagnostics: self.errors,
             })
         }
     }
@@ -89,6 +89,7 @@ impl Context {
 
                 if ident != "include" {
                     self.fail(item, "Unsupported macro");
+                    return;
                 }
 
                 const USAGE: &str =
@@ -144,7 +145,10 @@ impl Context {
             }) => {
                 self.fail_attrs(attrs);
                 self.fail_vis(vis);
-                self.fail_opt(&generics.lt_token.as_ref(), "Generics are not supported");
+                self.fail_opt(
+                    &generics.lt_token.as_ref().map(|_| generics),
+                    "Generics are not supported",
+                );
                 self.fail_opt(
                     &generics.where_clause.as_ref(),
                     "Generics are not supported",
@@ -206,13 +210,7 @@ impl Context {
             abi,
             fn_token: _,
             ident,
-            generics:
-                syn::Generics {
-                    lt_token,
-                    params: _,
-                    gt_token: _,
-                    where_clause: _,
-                },
+            generics,
             paren_token: _,
             inputs,
             variadic,
@@ -221,8 +219,11 @@ impl Context {
         self.fail_opt(constness, "Const functions are not supported");
         self.fail_opt(asyncness, "Async functions are not supported");
         self.fail_opt(unsafety, "Unsafe functions are not supported");
-        self.fail_opt(abi, "Explicit ABIs are not supported");
-        self.fail_opt(lt_token, "Generics are not supported");
+        self.fail_opt(abi, "`extern` functions are not supported");
+        self.fail_opt(
+            &generics.lt_token.as_ref().map(|_| generics),
+            "Generics are not supported",
+        );
         self.fail_opt(variadic, "Variadic functions are not supported");
 
         let ret = match output {
@@ -532,7 +533,7 @@ impl Context {
                         (from, limits, to)
                     }
                     _ => {
-                        self.fail(expr, "For loops only support range iteration");
+                        self.fail(range_expr, "For loops only support range iteration");
                         return;
                     }
                 };

@@ -8,7 +8,7 @@
 ## Why
 Because it's fun, duh.
 
-Also, it might be a good teaching tool, so you can temporarily "turn off" the borrow checker and see what is to write in unsafe system languages, without actually having any C or C++ knowledge.
+Also, it might be a good teaching tool, so you can temporarily "turn off" the borrow checker. You can see how writing in unsafe system languages looks like, without actually having any C or C++ knowledge.
 
 ### Input
 ```rust
@@ -31,3 +31,21 @@ u32* foo() {
   return y;
 }
 ```
+
+## Reference
+* No type inference, lifetimes, traits, generics, methods, `impl`s, visibility modifiers, paths, tuples, patterns, attributes, etc.
+* `match` &rarr; `switch`
+* `while`, `loop`, `for i in 0..n {}`, `if-else`.
+* Primitives `u32`, `i32`, `usize`, ...
+* References `&x` and `*x`.
+* Structs and arrays.
+* No fancy `restrict`, `const` or `volatile` shenanigans.
+
+## TODO
+* [ ] Remove all the `todo!()`s and panics.
+* [ ] Unions
+* [ ] Infer `->` operator.
+* [ ] Some form of `use` modules
+* [ ] `static`s
+* [ ] Tuples?
+* [ ] Attributes for "annotations" (e.g. `volatile`)
