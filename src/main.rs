@@ -14,6 +14,7 @@ use proc_macro2::{LineColumn, Span};
 
 type Error = Box<dyn std::error::Error>;
 
+mod c_lang;
 mod codegen;
 
 fn main() -> Result<(), Error> {
@@ -79,7 +80,7 @@ impl<'a> Session<'a> {
         })
     }
 
-    fn compile(&self) -> Result<codegen::Program, SessionError> {
+    fn compile(&self) -> Result<c_lang::Program, SessionError> {
         let syn_file = syn::parse_file(self.source.source())
             .map_err(|e| {
                 Diagnostic::error()

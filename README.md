@@ -20,6 +20,10 @@ fn foo() -> &u32 {
 ```
 
 ### Output
+```
+lipstick foo.rs
+```
+
 ```c
 #include <stdint.h>
 #ifndef u32
@@ -43,7 +47,6 @@ u32* foo() {
 
 ## TODO
 * [ ] Remove all the `todo!()`s and panics.
-* [ ] Unions
 * [ ] Infer `->` operator.
 * [ ] Some form of `use` modules
 * [ ] `static`s
