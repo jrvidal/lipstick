@@ -52,3 +52,4 @@ u32* foo() {
 * [ ] `static`s
 * [ ] Tuples?
 * [ ] Attributes for "annotations" (e.g. `volatile`)
+* [ ] Reorder declarations to avoid implicit declaration warnings

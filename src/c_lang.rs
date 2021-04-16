@@ -499,12 +499,20 @@ impl Display for Declarator {
             f.write_str("*")?;
         }
 
-        match ddecl {
+        write!(f, "{}", ddecl)
+    }
+}
+
+impl Display for DirectDeclarator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
             DirectDeclarator::Ident(ident) => f.write_str(ident)?,
             DirectDeclarator::Paren(decl) => {
                 write!(f, "({})", decl)?;
             }
-            DirectDeclarator::Array(_, _) => todo!(),
+            DirectDeclarator::Array(decl, len) => {
+                write!(f, "{}[{}]", decl, len)?;
+            }
             DirectDeclarator::Function => todo!(),
         }
 

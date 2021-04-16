@@ -372,43 +372,81 @@ impl Context {
     }
 
     fn transform_declarator(&mut self, ident: String, ty: &syn::Type) -> (String, Declarator) {
-        let mut fail = |msg: &str| self.fail(ty, &format!("{} is not supported", msg));
+        let mut declarator = Declarator {
+            pointer: 0,
+            ddecl: DirectDeclarator::Ident(ident),
+        };
 
-        match ty {
-            syn::Type::Array(_) => { /* TODO: SUPPORT? */ }
-            syn::Type::BareFn(_) => { /* TODO: SUPPORT? */ }
-            syn::Type::Group(group) => return self.transform_declarator(ident, &*group.elem),
-            syn::Type::ImplTrait(_) => fail("Impl trait"),
-            syn::Type::Infer(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Type::Macro(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Type::Never(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Type::Paren(paren) => return self.transform_declarator(ident, &*paren.elem),
-            syn::Type::Path(type_path) => {
-                self.fail_opt(
-                    &type_path.qself.as_ref().map(|q| &*q.ty),
-                    unsupported!["Explicit self types"],
-                );
-                if let Some(ty_ident) = self.path_to_ident(&type_path.path) {
-                    let decl = Declarator {
-                        pointer: 0,
-                        ddecl: DirectDeclarator::Ident(ident),
+        let mut ty = ty;
+
+        loop {
+            match ty {
+                syn::Type::Array(syn::TypeArray {
+                    bracket_token: _,
+                    elem,
+                    semi_token: _,
+                    len,
+                }) => {
+                    let length = self.transform_expr(len);
+                    declarator = if declarator.pointer == 0 {
+                        declarator.ddecl = DirectDeclarator::Array(declarator.ddecl.into(), length);
+                        declarator
+                    } else {
+                        let paren = DirectDeclarator::Paren(declarator.into());
+                        Declarator {
+                            pointer: 0,
+                            ddecl: DirectDeclarator::Array(paren.into(), length),
+                        }
                     };
-                    return (ty_ident, decl);
+                    ty = elem;
+                    continue;
                 }
+                syn::Type::BareFn(_) => { /* TODO: SUPPORT? */ }
+                syn::Type::Group(syn::TypeGroup {
+                    group_token: _,
+                    elem,
+                }) => {
+                    ty = elem;
+                    continue;
+                }
+                syn::Type::ImplTrait(_) => self.fail(ty, unsupported!["Impl trait" 1]),
+                syn::Type::Infer(_) => self.fail(ty, unsupported!["The inferred type `_`" 1]),
+                syn::Type::Macro(_) => self.fail(ty, unsupported!["Macros in type position"]),
+                syn::Type::Never(_) => self.fail(ty, unsupported!["The never type" 1]),
+                syn::Type::Paren(syn::TypeParen {
+                    paren_token: _,
+                    elem,
+                }) => {
+                    ty = &*elem;
+                    continue;
+                }
+                syn::Type::Path(type_path) => {
+                    self.fail_opt(
+                        &type_path.qself.as_ref().map(|q| &*q.ty),
+                        unsupported!["Explicit self types"],
+                    );
+                    if let Some(ty_ident) = self.path_to_ident(&type_path.path) {
+                        return (ty_ident, declarator);
+                    }
+                }
+                syn::Type::Ptr(_) => {
+                    self.fail(ty, "Raw pointer syntax is not supported. Use references.")
+                }
+                syn::Type::Reference(ty_ref) => {
+                    self.fail_opt(&ty_ref.lifetime, unsupported!["Explicit lifetimes"]);
+                    self.fail_opt(&ty_ref.mutability, unsupported!["Mutable references"]);
+
+                    declarator.pointer += 1;
+                    ty = &*ty_ref.elem;
+                    continue;
+                }
+                syn::Type::Slice(_) => self.fail(ty, unsupported!["Slices"]),
+                syn::Type::TraitObject(_) => self.fail(ty, unsupported!["Trait objects"]),
+                syn::Type::Tuple(_) => self.fail(ty, unsupported!["Tuples"]),
+                syn::Type::Verbatim(_) => self.fail(ty, "Unexpected type"),
+                syn::Type::__TestExhaustive(_) => unreachable!(),
             }
-            syn::Type::Ptr(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Type::Reference(ty_ref) => {
-                self.fail_opt(&ty_ref.lifetime, unsupported!["Explicit lifetimes"]);
-                self.fail_opt(&ty_ref.mutability, unsupported!["Mutable references"]);
-                let mut ret = self.transform_declarator(ident, &*ty_ref.elem);
-                ret.1.pointer += 1;
-                return ret;
-            }
-            syn::Type::Slice(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Type::TraitObject(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Type::Tuple(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Type::Verbatim(_) => { /* TODO: UNSUPPORTED */ }
-            syn::Type::__TestExhaustive(_) => unreachable!(),
+            break;
         }
 
         let declaration = Declaration::fallback();
