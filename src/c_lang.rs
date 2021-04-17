@@ -72,14 +72,16 @@ impl Display for Item {
 
 #[derive(Debug)]
 pub struct Signature {
-    pub ret: Type,
+    pub ret: Declaration,
     pub name: String,
     pub args: Vec<(String, Declarator)>,
 }
 
 impl Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.ret.fmt(f)?;
+        self.ret.0.fmt(f)?;
+        f.write_str(" ")?;
+        self.ret.1.fmt(f)?;
         f.write_str(" ")?;
         f.write_str(&self.name)?;
         f.write_str("(")?;
@@ -242,7 +244,7 @@ pub enum Expr {
     Not(Box<Expr>),
     Neg(Box<Expr>),
     Field(Box<Expr>, String),
-    Cast(Type, Box<Expr>),
+    Cast(Box<Declaration>, Box<Expr>),
     Index(Box<Expr>, Box<Expr>),
     StructInit(Vec<(String, Expr)>),
     ArrayInit(Vec<Expr>),
@@ -423,8 +425,8 @@ impl Display for Expr {
             }
             Expr::Paren(expr) => write!(f, "({})", expr),
             Expr::Ternary(test, then, else_) => write!(f, "{} ? {} : {}", test, then, else_),
-            Expr::Cast(ty, expr) => {
-                write!(f, "({}) {}", ty, expr)
+            Expr::Cast(decl, expr) => {
+                write!(f, "({} {}) {}", decl.0, decl.1, expr)
             }
             Expr::Binary(right, op, left) => {
                 // TODO: precedence
@@ -438,22 +440,6 @@ impl Display for Expr {
 }
 
 #[derive(Debug, Clone)]
-pub struct Type {
-    pub ident: String,
-    pub pointer: u8,
-}
-
-impl Display for Type {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.ident)?;
-        for _ in 0..self.pointer {
-            f.write_str("*")?;
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
 pub struct Declaration(pub String, pub Declarator);
 
 impl Declaration {
@@ -468,7 +454,7 @@ impl From<(String, Declarator)> for Declaration {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Declarator {
     pub pointer: u8,
     pub ddecl: DirectDeclarator,
@@ -483,8 +469,9 @@ impl Declarator {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum DirectDeclarator {
+    Abstract,
     Ident(String),
     Paren(Box<Declarator>),
     Array(Box<Self>, Expr),
@@ -506,6 +493,7 @@ impl Display for Declarator {
 impl Display for DirectDeclarator {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            DirectDeclarator::Abstract => {}
             DirectDeclarator::Ident(ident) => f.write_str(ident)?,
             DirectDeclarator::Paren(decl) => {
                 write!(f, "({})", decl)?;

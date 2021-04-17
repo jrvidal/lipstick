@@ -4,7 +4,6 @@ use syn::spanned::Spanned;
 
 use crate::c_lang::{
     BinOp, Block, Declaration, Declarator, DirectDeclarator, Expr, Item, Program, Signature, Stmt,
-    Type,
 };
 
 macro_rules! unsupported {
@@ -232,7 +231,8 @@ impl Context {
                     field_ident
                         .as_ref()
                         .expect("Unexpected unnamed field")
-                        .to_string(),
+                        .to_string()
+                        .into(),
                     ty,
                 )
                 .into(),
@@ -276,11 +276,14 @@ impl Context {
         self.fail_opt(variadic, unsupported!["Variadic functions"]);
 
         let ret = match output {
-            syn::ReturnType::Default => Type {
-                ident: "void".to_string(),
-                pointer: 0,
-            },
-            syn::ReturnType::Type(_, ty) => self.transform_type(ty),
+            syn::ReturnType::Default => Declaration(
+                "void".to_string(),
+                Declarator {
+                    pointer: 0,
+                    ddecl: DirectDeclarator::Abstract,
+                },
+            ),
+            syn::ReturnType::Type(_, ty) => self.transform_declarator(None, ty).into(),
         };
 
         let mut args = vec![];
@@ -305,51 +308,6 @@ impl Context {
         out.push(Item::Function(signature, block));
     }
 
-    fn transform_type(&mut self, ty: &syn::Type) -> Type {
-        let mut fail = |msg: &str| self.fail(ty, &format!("{} are not supported", msg));
-
-        match ty {
-            syn::Type::Array(_) => { /* TODO: SUPPORT? */ }
-            syn::Type::BareFn(_) => { /* TODO: SUPPORT? */ }
-            syn::Type::Group(group) => return self.transform_type(&*group.elem),
-            syn::Type::ImplTrait(_) => fail("Impl trait types"),
-            syn::Type::Infer(_) => fail("Inferred types"),
-            syn::Type::Macro(_) => fail("Macros in type position"),
-            syn::Type::Never(_) => self.fail(ty, unsupported!["Never type" 1]),
-            syn::Type::Paren(paren) => return self.transform_type(&*paren.elem),
-            syn::Type::Path(type_path) => {
-                self.fail_opt(
-                    &type_path.qself.as_ref().map(|q| &*q.ty),
-                    unsupported!["Explicit self types"],
-                );
-                if let Some(ident) = self.path_to_ident(&type_path.path) {
-                    return Type { ident, pointer: 0 };
-                }
-            }
-            syn::Type::Ptr(_) => {
-                self.fail(ty, "Raw pointer types are not supported. Use references.")
-            }
-            syn::Type::Reference(ty_ref) => {
-                self.fail_opt(&ty_ref.lifetime, unsupported!["Explicit lifetimes"]);
-                self.fail_opt(&ty_ref.mutability, unsupported!["Mutable references"]);
-                let mut ret = self.transform_type(&*ty_ref.elem);
-                ret.pointer += 1;
-                return ret;
-            }
-            syn::Type::Slice(_) => fail("Slices"),
-            syn::Type::TraitObject(_) => fail("Trait objects"),
-            syn::Type::Tuple(_) => fail("Tuples"),
-            syn::Type::Verbatim(_) => self.fail(ty, "Unsupported type"),
-            syn::Type::__TestExhaustive(_) => unreachable!(),
-        }
-
-        // Catch-all
-        Type {
-            ident: "void".to_string(),
-            pointer: 0,
-        }
-    }
-
     fn transform_variable_declarator(&mut self, pat_type: &syn::PatType) -> (String, Declarator) {
         self.fail_attrs(&pat_type.attrs);
         let ident = match &*pat_type.pat {
@@ -368,13 +326,19 @@ impl Context {
                 "u32".to_string()
             }
         };
-        self.transform_declarator(ident, &*pat_type.ty)
+        self.transform_declarator(Some(ident), &*pat_type.ty)
     }
 
-    fn transform_declarator(&mut self, ident: String, ty: &syn::Type) -> (String, Declarator) {
+    fn transform_declarator(
+        &mut self,
+        ident: Option<String>,
+        ty: &syn::Type,
+    ) -> (String, Declarator) {
         let mut declarator = Declarator {
             pointer: 0,
-            ddecl: DirectDeclarator::Ident(ident),
+            ddecl: ident
+                .map(DirectDeclarator::Ident)
+                .unwrap_or(DirectDeclarator::Abstract),
         };
 
         let mut ty = ty;
@@ -821,7 +785,10 @@ impl Context {
                 ty,
             }) => {
                 self.fail_attrs(attrs);
-                return Expr::Cast(self.transform_type(ty), self.transform_expr(expr).into());
+                return Expr::Cast(
+                    Box::new(self.transform_declarator(None, ty).into()),
+                    self.transform_expr(expr).into(),
+                );
             }
             syn::Expr::Closure(_) => self.fail(expr, unsupported!["Closures"]),
             syn::Expr::Field(syn::ExprField {
@@ -1009,7 +976,17 @@ impl Context {
                     fields.push((field_ident, self.transform_expr(expr)));
                 }
 
-                return Expr::Cast(Type { pointer: 0, ident }, Expr::StructInit(fields).into());
+                return Expr::Cast(
+                    Declaration(
+                        ident,
+                        Declarator {
+                            pointer: 0,
+                            ddecl: DirectDeclarator::Abstract,
+                        },
+                    )
+                    .into(),
+                    Expr::StructInit(fields).into(),
+                );
             }
             syn::Expr::Try(_) => self.fail(expr, unsupported!["Try operator" 1]),
             syn::Expr::TryBlock(_) => self.fail(expr, unsupported!["Try blocks"]),
