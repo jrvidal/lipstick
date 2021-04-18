@@ -258,6 +258,84 @@ impl Expr {
     pub fn fallback() -> Self {
         Expr::Integer(0)
     }
+
+    fn precedence(&self) -> u8 {
+        match self {
+            Expr::Integer(_) => 0,
+            Expr::String(_) => 0,
+            Expr::Boolean(_) => 0,
+            Expr::Char(_) => 0,
+            Expr::Float(_) => 0,
+            Expr::Variable(_) => 0,
+            Expr::ArrayInit(_) => 0,
+            Expr::Paren(_) => 0,
+            Expr::StructInit(_) => 0,
+
+            Expr::Call(_, _) => 1,
+            Expr::Index(_, _) => 1,
+            Expr::Field(_, _) => 1,
+            Expr::Cast(_, _) => 2,
+            Expr::Ref(_) => 2,
+            Expr::Deref(_) => 2,
+            Expr::Not(_) => 2,
+            Expr::Neg(_) => 2,
+            Expr::Ternary(_, _, _) => 13,
+            Expr::Binary(_, op, _) => op.precedence(),
+        }
+    }
+
+    pub fn fix_precedence(&mut self) {
+        let precedence = self.precedence();
+        match self {
+            Expr::Integer(_)
+            | Expr::String(_)
+            | Expr::Boolean(_)
+            | Expr::Char(_)
+            | Expr::Float(_)
+            | Expr::Variable(_)
+            | Expr::ArrayInit(_)
+            | Expr::Paren(_)
+            | Expr::StructInit(_) => {}
+            Expr::Deref(expr)
+            | Expr::Ref(expr)
+            | Expr::Not(expr)
+            | Expr::Field(expr, _)
+            | Expr::Cast(_, expr)
+            | Expr::Index(expr, _)
+            | Expr::Call(expr, _)
+            | Expr::Neg(expr) => {
+                if expr.precedence() > precedence {
+                    expr.wrap()
+                }
+            }
+            Expr::Ternary(test, then, else_) => {
+                if test.precedence() > precedence {
+                    test.wrap();
+                }
+                if then.precedence() > precedence {
+                    then.wrap();
+                }
+                if else_.precedence() > precedence {
+                    else_.wrap();
+                }
+            }
+            Expr::Binary(left, op, right) => {
+                if left.precedence() > op.precedence() {
+                    left.wrap();
+                }
+                if right.precedence() > op.precedence() {
+                    right.wrap();
+                }
+            }
+        }
+    }
+
+    fn wrap(&mut self) {
+        let mut this = Expr::Integer(0);
+        std::mem::swap(&mut this, self);
+        this = Expr::Paren(this.into());
+        std::mem::swap(&mut this, self);
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -290,6 +368,41 @@ pub enum BinOp {
     BitOrEq,
     ShlEq,
     ShrEq,
+}
+
+impl BinOp {
+    fn precedence(&self) -> u8 {
+        match self {
+            BinOp::Mul => 3,
+            BinOp::Div => 3,
+            BinOp::Rem => 3,
+            BinOp::Add => 4,
+            BinOp::Sub => 4,
+            BinOp::Shl => 5,
+            BinOp::Shr => 5,
+            BinOp::Lt => 6,
+            BinOp::Le => 6,
+            BinOp::Ge => 6,
+            BinOp::Gt => 6,
+            BinOp::Eq => 7,
+            BinOp::Ne => 7,
+            BinOp::BitAnd => 8,
+            BinOp::BitXor => 9,
+            BinOp::BitOr => 10,
+            BinOp::And => 11,
+            BinOp::Or => 12,
+            BinOp::AddEq => 14,
+            BinOp::SubEq => 14,
+            BinOp::MulEq => 14,
+            BinOp::DivEq => 14,
+            BinOp::RemEq => 14,
+            BinOp::BitXorEq => 14,
+            BinOp::BitAndEq => 14,
+            BinOp::BitOrEq => 14,
+            BinOp::ShlEq => 14,
+            BinOp::ShrEq => 14,
+        }
+    }
 }
 
 impl<'a> From<&'a syn::BinOp> for BinOp {
@@ -428,9 +541,8 @@ impl Display for Expr {
             Expr::Cast(decl, expr) => {
                 write!(f, "({} {}) {}", decl.0, decl.1, expr)
             }
-            Expr::Binary(right, op, left) => {
-                // TODO: precedence
-                write!(f, "{} {} {}", right, op, left)
+            Expr::Binary(left, op, right) => {
+                write!(f, "{} {} {}", left, op, right)
             }
             Expr::Index(expr, index) => {
                 write!(f, "{}[{}]", expr, index)

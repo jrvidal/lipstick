@@ -738,6 +738,12 @@ impl Context {
     }
 
     fn transform_expr(&mut self, expr: &syn::Expr) -> Expr {
+        let mut ret = self.transform_expr_raw(expr);
+        ret.fix_precedence();
+        ret
+    }
+
+    fn transform_expr_raw(&mut self, expr: &syn::Expr) -> Expr {
         match expr {
             syn::Expr::Array(syn::ExprArray {
                 attrs,
@@ -758,10 +764,9 @@ impl Context {
                 right,
             }) => {
                 self.fail_attrs(attrs);
-                let bin_op = BinOp::from(op);
                 return Expr::Binary(
                     self.transform_expr(left).into(),
-                    bin_op,
+                    BinOp::from(op),
                     self.transform_expr(right).into(),
                 );
             }
@@ -805,7 +810,6 @@ impl Context {
                         return Expr::fallback();
                     }
                 };
-                // TODO: parens?
                 return Expr::Field(self.transform_expr(&*base).into(), ident);
             }
             syn::Expr::Group(expr) => {

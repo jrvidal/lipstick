@@ -18,11 +18,11 @@ mod c_lang;
 mod codegen;
 
 fn main() -> Result<(), Error> {
-    let matches = App::new("lipstick")
+    let app = App::new("lipstick")
         .about("Lipstick for C")
         .author("Roberto Vidal <vidal.roberto.j@gmail.com>")
         .setting(clap::AppSettings::ArgRequiredElseHelp)
-        .setting(clap::AppSettings::ArgsNegateSubcommands)
+        // .setting(clap::AppSettings::ArgsNegateSubcommands)
         .arg(
             Arg::with_name("filename")
                 .required(true)
@@ -42,8 +42,18 @@ fn main() -> Result<(), Error> {
                         .last(true)
                         .help("Flags for the cc compiler"),
                 ),
-        )
-        .get_matches();
+        );
+
+    #[cfg(feature = "dev")]
+    app.subcommand(
+        App::new("syn").arg(
+            Arg::with_name("filename")
+                .required(true)
+                .help("The file to be compiled"),
+        ),
+    );
+
+    let matches = app.get_matches();
 
     if let Some(matches) = matches.subcommand_matches("cc") {
         let file_name = matches.value_of("filename").unwrap();
@@ -57,6 +67,16 @@ fn main() -> Result<(), Error> {
             .args(matches.values_of("flags").into_iter().flatten())
             .spawn()?
             .wait()?;
+        return Ok(());
+    }
+
+    #[cfg(feature = "dev")]
+    if let Some(matches) = matches.subcommand_matches("syn") {
+        let file_name = matches.value_of("filename").unwrap();
+        println!(
+            "{:#?}",
+            syn::parse_file(&std::fs::read_to_string(&file_name)?)?
+        );
         return Ok(());
     }
 
