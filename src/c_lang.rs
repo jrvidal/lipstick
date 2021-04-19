@@ -587,7 +587,7 @@ pub enum DirectDeclarator {
     Ident(String),
     Paren(Box<Declarator>),
     Array(Box<Self>, Expr),
-    Function,
+    Function(Box<DirectDeclarator>, Vec<Declaration>),
 }
 
 impl Display for Declarator {
@@ -613,7 +613,17 @@ impl Display for DirectDeclarator {
             DirectDeclarator::Array(decl, len) => {
                 write!(f, "{}[{}]", decl, len)?;
             }
-            DirectDeclarator::Function => todo!(),
+            DirectDeclarator::Function(ret, args) => {
+                write!(f, "{}", ret)?;
+                f.write_str("(")?;
+                for (i, arg) in args.iter().enumerate() {
+                    write!(f, "{} {}", arg.0, arg.1)?;
+                    if i != args.len() - 1 {
+                        f.write_str(", ")?;
+                    }
+                }
+                f.write_str(")")?;
+            }
         }
 
         Ok(())

@@ -365,7 +365,44 @@ impl Context {
                     ty = elem;
                     continue;
                 }
-                syn::Type::BareFn(_) => { /* TODO: SUPPORT? */ }
+                syn::Type::BareFn(syn::TypeBareFn {
+                    lifetimes,
+                    unsafety,
+                    abi,
+                    fn_token: _,
+                    paren_token: _,
+                    inputs,
+                    variadic,
+                    output,
+                }) => {
+                    self.fail_opt(lifetimes, unsupported!["Lifetimes"]);
+                    self.fail_opt(unsafety, unsupported!["Unsafe fn types"]);
+                    self.fail_opt(abi, unsupported!["Explicit ABIs"]);
+                    // TODO: support?
+                    self.fail_opt(variadic, unsupported!["Variadic functions"]);
+                    let args: Vec<_> = inputs
+                        .iter()
+                        .map(|input| {
+                            self.fail_attrs(&input.attrs);
+                            // TODO: do named args have any consequence? Should names be preserved
+                            let _ = &input.name;
+                            self.transform_declarator(None, &input.ty).into()
+                        })
+                        .collect();
+                    declarator.pointer += 1;
+                    let ddecl = DirectDeclarator::Paren(declarator.into());
+                    declarator = Declarator {
+                        pointer: 0,
+                        ddecl: DirectDeclarator::Function(ddecl.into(), args),
+                    };
+                    ty = match output {
+                        syn::ReturnType::Type(_, ty) => ty,
+                        syn::ReturnType::Default => {
+                            return ("void".to_string(), declarator);
+                        }
+                    };
+                    continue;
+                }
                 syn::Type::Group(syn::TypeGroup {
                     group_token: _,
                     elem,
