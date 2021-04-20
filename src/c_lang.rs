@@ -139,6 +139,11 @@ pub enum Stmt {
     Labeled(String, Box<Stmt>),
     Break(Option<String>),
     Continue(Option<String>),
+    Switch {
+        value: Expr,
+        cases: Vec<(Expr, Block)>,
+        catch: Option<Block>,
+    },
 }
 
 impl Display for Stmt {
@@ -226,6 +231,25 @@ impl Display for Stmt {
                     end = range.1
                 )?;
                 block.fmt(f)
+            }
+            Stmt::Switch {
+                value,
+                cases,
+                catch,
+            } => {
+                writeln!(f, "switch ({}) {{", value)?;
+
+                for case in cases {
+                    write!(f, "  case {}: ", case.0)?;
+                    write!(f, "{}", case.1)?;
+                }
+
+                if let Some(catch) = catch {
+                    f.write_str("  default: ")?;
+                    write!(f, "{}", catch)?;
+                }
+
+                f.write_str("}\n")
             }
         }
     }

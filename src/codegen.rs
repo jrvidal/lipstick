@@ -707,7 +707,81 @@ impl Context {
                     push![self, state, out ; while_stmt];
                 }
             }
-            syn::Expr::Match(_) => {}
+            syn::Expr::Match(syn::ExprMatch {
+                attrs,
+                match_token: _,
+                expr,
+                brace_token: _,
+                arms,
+            }) => {
+                self.fail_attrs(attrs);
+                let expr = self.transform_expr(expr);
+                let mut cases = vec![];
+                let mut catch = None;
+
+                for (
+                    i,
+                    syn::Arm {
+                        attrs,
+                        pat,
+                        guard,
+                        fat_arrow_token: _,
+                        body,
+                        comma: _,
+                    },
+                ) in arms.iter().enumerate()
+                {
+                    self.fail_attrs(attrs);
+                    self.fail_opt(
+                        &guard.as_ref().map(|(if_, _)| if_),
+                        unsupported!["Match guards"],
+                    );
+
+                    let block = if let syn::Expr::Block(body) = &**body {
+                        self.transform_block(&body.block, false)
+                    } else {
+                        self.fail(
+                            body,
+                            "Match expression only support blocks as bodies in each arm",
+                        );
+                        continue;
+                    };
+
+                    let last_arm = i == arms.len() - 1;
+
+                    match pat {
+                        syn::Pat::Ident(pat) => {
+                            self.fail_attrs(&pat.attrs);
+                            cases.push((Expr::Variable(pat.ident.to_string()), block));
+                        }
+                        syn::Pat::Lit(pat) => {
+                            self.fail_attrs(&pat.attrs);
+                            cases.push((self.transform_expr(&pat.expr), block));
+                        }
+                        syn::Pat::Wild(pat) if catch.is_none() && last_arm => {
+                            self.fail_attrs(&pat.attrs);
+                            catch = Some(block);
+                        }
+                        syn::Pat::Wild(_) => {
+                            self.fail(
+                                pat,
+                                "Wildcard pattern can only be used as the last arm of a `match`",
+                            );
+                            continue;
+                        }
+                        _ => {
+                            self.fail(pat, "Match expressions only support variables and literals");
+                            continue;
+                        }
+                    }
+                }
+
+                out.push(Stmt::Switch {
+                    value: expr,
+                    cases,
+                    catch,
+                });
+            }
             syn::Expr::Return(syn::ExprReturn {
                 attrs,
                 return_token: _,
@@ -910,22 +984,7 @@ impl Context {
             syn::Expr::Let(_) => self.fail(expr, unsupported!["Let guards"]),
             syn::Expr::Lit(expr_lit) => {
                 self.fail_attrs(&expr_lit.attrs);
-                match &expr_lit.lit {
-                    syn::Lit::Int(lit) => match lit.base10_parse() {
-                        Ok(n) => return Expr::Integer(n),
-                        Err(e) => self.fail(lit, &format!("Unable to parse integer: {}", e)),
-                    },
-                    syn::Lit::Float(lit) => match lit.base10_parse() {
-                        Ok(x) => return Expr::Float(x),
-                        Err(e) => self.fail(lit, &format!("Unable to parse float: {}", e)),
-                    },
-                    syn::Lit::Str(lit) => return Expr::String(lit.value()),
-                    syn::Lit::Bool(lit) => return Expr::Boolean(lit.value()),
-                    syn::Lit::Char(lit) => return Expr::Char(lit.value()),
-                    syn::Lit::ByteStr(_) => self.fail(expr, unsupported!["Byte strings"]),
-                    syn::Lit::Byte(_) => self.fail(expr, unsupported!["Byte literals"]),
-                    syn::Lit::Verbatim(_) => self.fail(expr, "Unsupported expr"),
-                }
+                return self.transform_lit(&expr_lit.lit);
             }
             syn::Expr::Macro(_) => self.fail(expr, unsupported!["Macro expressions"]),
             syn::Expr::MethodCall(_) => self.fail(expr, unsupported!["Method calls"]),
@@ -1061,6 +1120,26 @@ impl Context {
             }
         }
 
+        Expr::fallback()
+    }
+
+    fn transform_lit(&mut self, lit: &syn::Lit) -> Expr {
+        match lit {
+            syn::Lit::Int(lit) => match lit.base10_parse() {
+                Ok(n) => return Expr::Integer(n),
+                Err(e) => self.fail(lit, &format!("Unable to parse integer: {}", e)),
+            },
+            syn::Lit::Float(lit) => match lit.base10_parse() {
+                Ok(x) => return Expr::Float(x),
+                Err(e) => self.fail(lit, &format!("Unable to parse float: {}", e)),
+            },
+            syn::Lit::Str(lit) => return Expr::String(lit.value()),
+            syn::Lit::Bool(lit) => return Expr::Boolean(lit.value()),
+            syn::Lit::Char(lit) => return Expr::Char(lit.value()),
+            syn::Lit::ByteStr(_) => self.fail(lit, unsupported!["Byte strings"]),
+            syn::Lit::Byte(_) => self.fail(lit, unsupported!["Byte literals"]),
+            syn::Lit::Verbatim(_) => self.fail(lit, "Unsupported literal"),
+        }
         Expr::fallback()
     }
 

@@ -46,7 +46,6 @@ u32* foo() {
 * No fancy `restrict`, `const` or `volatile` shenanigans.
 
 ## TODO
-* [ ] Remove all the `todo!()`s and panics.
 * [ ] Infer `->` operator.
 * [ ] Some form of `use` modules
 * [ ] `static`s
