@@ -1,7 +1,7 @@
-use proc_macro2::{Span, TokenTree};
-use std::fmt::{self, Display};
+use proc_macro2::TokenTree;
 use syn::spanned::Spanned;
 
+use super::{CodeError as Error, CompilationError};
 use crate::c_lang::{
     BinOp, Block, Declaration, Declarator, DirectDeclarator, Expr, Item, Program, Signature, Stmt,
 };
@@ -15,29 +15,6 @@ macro_rules! unsupported {
         std::concat!($msg, " are not supported")
     };
 }
-
-#[derive(Debug)]
-pub struct Error {
-    pub span: Span,
-    pub msg: String,
-}
-
-#[derive(Debug)]
-pub struct CompilationError {
-    pub diagnostics: Vec<Error>,
-}
-
-impl Display for CompilationError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for error in &self.diagnostics {
-            writeln!(f, "Error: {} ({:?})", error.msg, error.span)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl std::error::Error for CompilationError {}
 
 struct Context<'a> {
     errors: Vec<Error>,
@@ -927,8 +904,7 @@ impl<'a> Context<'a> {
                         return Expr::fallback();
                     }
                 };
-                let ty = self.type_info.type_of(&*base);
-                let deref = self.type_info.needs_deref(ty, &ident);
+                let deref = self.type_info.needs_deref(&*base, &ident);
                 return Expr::Field {
                     base: self.transform_expr(&*base).into(),
                     field: ident,

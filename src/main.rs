@@ -112,12 +112,14 @@ impl<'a> Session<'a> {
                 diagnostics: vec![d],
             })?;
 
-        let type_info = typecheck::check(&syn_file);
-        let error = match codegen::transform(&syn_file, type_info) {
-            Ok(program) => return Ok(program),
-            Err(e) => e,
-        };
+        let type_info = typecheck::check(&syn_file).map_err(|e| self.map_err(e))?;
+        match codegen::transform(&syn_file, type_info) {
+            Ok(program) => Ok(program),
+            Err(e) => Err(self.map_err(e)),
+        }
+    }
 
+    fn map_err(&self, error: CompilationError) -> SessionError {
         let diagnostics = error
             .diagnostics
             .into_iter()
@@ -128,7 +130,7 @@ impl<'a> Session<'a> {
             })
             .collect();
 
-        Err(SessionError { diagnostics })?
+        SessionError { diagnostics }
     }
 
     fn span_to_range(&self, span: Span) -> Range<usize> {
@@ -187,3 +189,26 @@ impl Debug for SessionError {
 }
 
 impl std::error::Error for SessionError {}
+
+#[derive(Debug)]
+pub struct CodeError {
+    pub span: Span,
+    pub msg: String,
+}
+
+#[derive(Debug)]
+pub struct CompilationError {
+    pub diagnostics: Vec<CodeError>,
+}
+
+impl Display for CompilationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for error in &self.diagnostics {
+            writeln!(f, "Error: {} ({:?})", error.msg, error.span)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl std::error::Error for CompilationError {}

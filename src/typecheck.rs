@@ -1,9 +1,15 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{
+    collections::{HashMap, HashSet},
+    hash::Hash,
+};
 
 use syn::{
+    spanned::Spanned,
     visit::{self, Visit},
     Block, Expr,
 };
+
+use super::{CodeError as Error, CompilationError};
 
 struct StringInterner(std::cell::RefCell<string_interner::StringInterner<TypeId>>);
 
@@ -75,7 +81,8 @@ pub struct TypeInfo<'a> {
 }
 
 impl<'a> TypeInfo<'a> {
-    pub fn needs_deref(&self, ty: Type, field: &str) -> bool {
+    pub fn needs_deref(&self, expr: &'a Expr, field: &str) -> bool {
+        let ty = self.type_of(expr);
         if let Type::Ref(ty) = ty {
             Some(*ty)
         } else {
@@ -90,13 +97,12 @@ impl<'a> TypeInfo<'a> {
         })
         .and_then(|type_id| self.declared_types.get(&type_id))
         .map(|declared| match declared {
-            DeclaredType::Struct(fields) => fields.contains_key(field),
-            DeclaredType::Union(fields) => fields.contains_key(field),
+            DeclaredType::Composite(fields) => fields.contains_key(field),
             _ => false,
         })
         .unwrap_or(false)
     }
-    pub fn type_of(&self, expr: &'a Expr) -> Type {
+    fn type_of(&self, expr: &'a Expr) -> Type {
         self.cache.get(&expr.into()).cloned().unwrap_or_else(|| {
             let ty = self.compute_type_of(expr);
             // TODO: use cache
@@ -129,8 +135,9 @@ impl<'a> TypeInfo<'a> {
                 };
 
                 match self.declared_types.get(&type_id) {
-                    Some(DeclaredType::Struct(fields)) => fields.get(&field.to_string()).cloned(),
-                    Some(DeclaredType::Union(fields)) => fields.get(&field.to_string()).cloned(),
+                    Some(DeclaredType::Composite(fields)) => {
+                        fields.get(&field.to_string()).cloned()
+                    }
                     Some(DeclaredType::Function(_)) | None => None,
                 }
                 .unwrap_or(Type::Unknown)
@@ -158,24 +165,10 @@ impl<'a> TypeInfo<'a> {
 
                 Type::Unknown
             }
-            Expr::Call(expr) => {
-                match self.type_of(&*expr.func) {
-                    Type::Function(ty) => *ty,
-                    _ => Type::Unknown,
-                }
-                // let caller_ty = self.type_of(&*expr.func);
-                // match caller_ty {
-                //     Type::Function(ty_id) => Some(ty_id),
-                //     _ => None,
-                // }
-                // .and_then(|type_id| self.declared_types.get(&type_id))
-                // .and_then(|declared| match declared {
-                //     DeclaredType::Function(ty) => Some(ty),
-                //     _ => None,
-                // })
-                // .cloned()
-                // .unwrap_or(Type::Unknown)
-            }
+            Expr::Call(expr) => match self.type_of(&*expr.func) {
+                Type::Function(ty) => *ty,
+                _ => Type::Unknown,
+            },
             Expr::Cast(expr) => assign_type(&self.type_names, &*expr.ty),
             Expr::Group(expr) => self.type_of(&*expr.expr),
             Expr::Paren(expr) => self.type_of(&*expr.expr),
@@ -239,12 +232,14 @@ impl Default for TypeInfo<'_> {
     }
 }
 
-pub fn check<'a>(file: &'a syn::File) -> TypeInfo<'a> {
+pub fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, CompilationError> {
     let mut info: TypeInfo = Default::default();
+    let mut seen = HashSet::new();
+    let mut errors = vec![];
 
     for item in &file.items {
-        let (ident, fields, struct_) = match item {
-            syn::Item::Union(item) => (&item.ident, &item.fields, false),
+        let (ident, fields) = match item {
+            syn::Item::Union(item) => (&item.ident, &item.fields),
             syn::Item::Struct(item) => {
                 let fields = if let syn::Fields::Named(fields) = &item.fields {
                     fields
@@ -252,7 +247,7 @@ pub fn check<'a>(file: &'a syn::File) -> TypeInfo<'a> {
                     continue;
                 };
 
-                (&item.ident, fields, true)
+                (&item.ident, fields)
             }
             syn::Item::Fn(item) => {
                 let ident = &item.sig.ident;
@@ -262,6 +257,12 @@ pub fn check<'a>(file: &'a syn::File) -> TypeInfo<'a> {
                 };
 
                 let type_id = info.type_names.get_or_intern(ident.to_string());
+                if !seen.insert(type_id) {
+                    errors.push(Error {
+                        msg: format!("Repeated declaration for {}", ident),
+                        span: item.span(),
+                    });
+                }
                 info.declared_types
                     .insert(type_id, DeclaredType::Function(ty));
                 continue;
@@ -279,15 +280,14 @@ pub fn check<'a>(file: &'a syn::File) -> TypeInfo<'a> {
             })
             .collect();
         let type_id = info.type_names.get_or_intern(ident.to_string());
-        // TODO: failed on repeated declarations
-        info.declared_types.insert(
-            type_id,
-            if struct_ {
-                DeclaredType::Struct(field_types)
-            } else {
-                DeclaredType::Union(field_types)
-            },
-        );
+        if !seen.insert(type_id) {
+            errors.push(Error {
+                msg: format!("Repeated declaration for {}", ident),
+                span: item.span(),
+            });
+        }
+        info.declared_types
+            .insert(type_id, DeclaredType::Composite(field_types));
     }
 
     let global_scope: &'static syn::Block = Box::leak(
@@ -323,9 +323,13 @@ pub fn check<'a>(file: &'a syn::File) -> TypeInfo<'a> {
 
     visitor.visit_file(file);
 
-    drop(visitor);
-
-    info
+    if errors.is_empty() {
+        Ok(info)
+    } else {
+        Err(CompilationError {
+            diagnostics: errors,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -343,8 +347,7 @@ impl string_interner::Symbol for TypeId {
 
 #[derive(Debug)]
 enum DeclaredType {
-    Struct(HashMap<String, Type>),
-    Union(HashMap<String, Type>),
+    Composite(HashMap<String, Type>),
     Function(Type),
 }
 
