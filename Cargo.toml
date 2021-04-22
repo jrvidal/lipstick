@@ -14,5 +14,6 @@ dev = ["syn/extra-traits"]
 clap = "2.33.3"
 codespan-reporting = "0.11.1"
 proc-macro2 = { version = "1.0.26", features = ["span-locations"] }
-syn = { version = "1.0.67", default-features = false, features = ["full", "parsing", "printing"] }
+string-interner = "0.12.2"
+syn = { version = "1.0.67", default-features = false, features = ["full", "parsing", "printing", "visit"] }
 tempfile = "3.2.0"

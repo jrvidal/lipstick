@@ -16,6 +16,7 @@ type Error = Box<dyn std::error::Error>;
 
 mod c_lang;
 mod codegen;
+mod typecheck;
 
 fn main() -> Result<(), Error> {
     let app = App::new("lipstick")
@@ -45,7 +46,7 @@ fn main() -> Result<(), Error> {
         );
 
     #[cfg(feature = "dev")]
-    app.subcommand(
+    let app = app.subcommand(
         App::new("syn").arg(
             Arg::with_name("filename")
                 .required(true)
@@ -110,7 +111,9 @@ impl<'a> Session<'a> {
             .map_err(|d| SessionError {
                 diagnostics: vec![d],
             })?;
-        let error = match codegen::transform(&syn_file) {
+
+        let type_info = typecheck::check(&syn_file);
+        let error = match codegen::transform(&syn_file, type_info) {
             Ok(program) => return Ok(program),
             Err(e) => e,
         };

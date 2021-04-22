@@ -46,9 +46,7 @@ u32* foo() {
 * No fancy `restrict`, `const` or `volatile` shenanigans.
 
 ## TODO
-* [ ] Infer `->` operator.
 * [ ] Some form of `use` modules
 * [ ] `static`s
 * [ ] Tuples?
 * [ ] Attributes for "annotations" (e.g. `volatile`)
-* [ ] Reorder declarations to avoid implicit declaration warnings

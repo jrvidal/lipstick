@@ -5,6 +5,7 @@ use syn::spanned::Spanned;
 use crate::c_lang::{
     BinOp, Block, Declaration, Declarator, DirectDeclarator, Expr, Item, Program, Signature, Stmt,
 };
+use crate::typecheck::TypeInfo;
 
 macro_rules! unsupported {
     ($msg:literal 1) => {
@@ -38,12 +39,12 @@ impl Display for CompilationError {
 
 impl std::error::Error for CompilationError {}
 
-#[derive(Default)]
-struct Context {
+struct Context<'a> {
     errors: Vec<Error>,
+    type_info: TypeInfo<'a>,
 }
 
-impl Context {
+impl<'a> Context<'a> {
     fn transform(mut self, file: &syn::File) -> std::result::Result<Program, CompilationError> {
         let syn::File {
             shebang,
@@ -56,10 +57,14 @@ impl Context {
 
         let mut decls = vec![];
         decls.extend(prelude());
+        let mut suffix = vec![];
 
         for item in items {
-            self.transform_item(item, &mut decls);
+            self.transform_item(item, &mut decls, &mut suffix);
         }
+
+        decls.extend(suffix);
+
         if self.errors.is_empty() {
             Ok(Program(decls))
         } else {
@@ -69,13 +74,13 @@ impl Context {
         }
     }
 
-    fn transform_item(&mut self, item: &syn::Item, out: &mut Vec<Item>) {
+    fn transform_item(&mut self, item: &syn::Item, prefix: &mut Vec<Item>, out: &mut Vec<Item>) {
         let mut fail = |msg: &str| self.fail(item, &format!("{} are not supported", msg));
         match item {
             syn::Item::Const(_) => fail("Const items"),
             syn::Item::Enum(_) => fail("Enums"),
             syn::Item::ExternCrate(_) => fail("Extern crates"),
-            syn::Item::Fn(item) => self.transform_fn(item, out),
+            syn::Item::Fn(item) => self.transform_fn(item, prefix, out),
             syn::Item::ForeignMod(_) => fail("Extern modules"),
             syn::Item::Impl(_) => fail("Impl blocks"),
             syn::Item::Macro(syn::ItemMacro {
@@ -170,7 +175,7 @@ impl Context {
                     self.fail(item, unsupported!["Empty structs"]);
                 }
 
-                out.push(Item::StructTypedef(ident.to_string()));
+                prefix.push(Item::StructTypedef(ident.to_string()));
                 out.push(Item::Struct(ident.to_string(), fields));
             }
             syn::Item::Trait(_) => fail("Traits"),
@@ -185,7 +190,7 @@ impl Context {
                 fields: item_fields,
             }) => {
                 let fields = self.transform_composite(attrs, vis, generics, Some(item_fields));
-                out.push(Item::UnionTypedef(ident.to_string()));
+                prefix.push(Item::UnionTypedef(ident.to_string()));
                 out.push(Item::Union(ident.to_string(), fields));
             }
             syn::Item::Use(_) => fail("Use declarations"),
@@ -242,7 +247,7 @@ impl Context {
         fields
     }
 
-    fn transform_fn(&mut self, item: &syn::ItemFn, out: &mut Vec<Item>) {
+    fn transform_fn(&mut self, item: &syn::ItemFn, prefix: &mut Vec<Item>, out: &mut Vec<Item>) {
         let syn::ItemFn {
             attrs,
             vis,
@@ -305,6 +310,7 @@ impl Context {
 
         let block = self.transform_expr_block(item_block);
 
+        prefix.push(Item::FunctionDeclaration(signature.clone()));
         out.push(Item::Function(signature, block));
     }
 
@@ -921,7 +927,13 @@ impl Context {
                         return Expr::fallback();
                     }
                 };
-                return Expr::Field(self.transform_expr(&*base).into(), ident);
+                let ty = self.type_info.type_of(&*base);
+                let deref = self.type_info.needs_deref(ty, &ident);
+                return Expr::Field {
+                    base: self.transform_expr(&*base).into(),
+                    field: ident,
+                    deref,
+                };
             }
             syn::Expr::Group(expr) => {
                 self.fail_attrs(&expr.attrs);
@@ -1159,9 +1171,9 @@ impl Context {
         });
     }
 
-    fn fail_opt<'a, S: 'a>(&mut self, item: &'a Option<S>, msg: &str) -> bool
+    fn fail_opt<'item, S: 'item>(&mut self, item: &'item Option<S>, msg: &str) -> bool
     where
-        &'a S: Spanned,
+        &'item S: Spanned,
     {
         if let Some(item) = item {
             self.fail(item, msg);
@@ -1171,9 +1183,13 @@ impl Context {
         }
     }
 
-    fn fail_iter<'a, S: 'a, T: IntoIterator<Item = &'a S>>(&mut self, item: T, msg: &str) -> bool
+    fn fail_iter<'item, S: 'item, T: IntoIterator<Item = &'item S>>(
+        &mut self,
+        item: T,
+        msg: &str,
+    ) -> bool
     where
-        &'a S: Spanned,
+        &'item S: Spanned,
     {
         let mut failed = false;
         for it in item {
@@ -1205,8 +1221,14 @@ impl Context {
     }
 }
 
-pub fn transform(file: &syn::File) -> std::result::Result<Program, CompilationError> {
-    let ctx = Context::default();
+pub fn transform<'a>(
+    file: &'a syn::File,
+    type_info: TypeInfo<'a>,
+) -> std::result::Result<Program, CompilationError> {
+    let ctx = Context {
+        errors: vec![],
+        type_info,
+    };
     ctx.transform(file)
 }
 

@@ -16,6 +16,7 @@ impl Display for Program {
 #[derive(Debug)]
 pub enum Item {
     Function(Signature, Block),
+    FunctionDeclaration(Signature),
     Include(bool, String),
     StructTypedef(String),
     Struct(String, Vec<Declaration>),
@@ -30,6 +31,10 @@ impl Display for Item {
             Item::Function(sig, block) => {
                 sig.fmt(f)?;
                 block.fmt(f)?;
+            }
+            Item::FunctionDeclaration(sig) => {
+                sig.fmt(f)?;
+                f.write_str(";\n")?;
             }
             Item::Include(root, header) => {
                 f.write_str("#include ")?;
@@ -70,7 +75,7 @@ impl Display for Item {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Signature {
     pub ret: Declaration,
     pub name: String,
@@ -267,7 +272,11 @@ pub enum Expr {
     Ref(Box<Expr>),
     Not(Box<Expr>),
     Neg(Box<Expr>),
-    Field(Box<Expr>, String),
+    Field {
+        base: Box<Expr>,
+        field: String,
+        deref: bool,
+    },
     Cast(Box<Declaration>, Box<Expr>),
     Index(Box<Expr>, Box<Expr>),
     StructInit(Vec<(String, Expr)>),
@@ -297,7 +306,7 @@ impl Expr {
 
             Expr::Call(_, _) => 1,
             Expr::Index(_, _) => 1,
-            Expr::Field(_, _) => 1,
+            Expr::Field { .. } => 1,
             Expr::Cast(_, _) => 2,
             Expr::Ref(_) => 2,
             Expr::Deref(_) => 2,
@@ -323,7 +332,7 @@ impl Expr {
             Expr::Deref(expr)
             | Expr::Ref(expr)
             | Expr::Not(expr)
-            | Expr::Field(expr, _)
+            | Expr::Field { base: expr, .. }
             | Expr::Cast(_, expr)
             | Expr::Index(expr, _)
             | Expr::Call(expr, _)
@@ -551,13 +560,9 @@ impl Display for Expr {
                 f.write_str("~")?;
                 expr.fmt(f)
             }
-            Expr::Field(expr, field) => {
-                // TODO: this should be handled in codegen proper
-                match &**expr {
-                    Expr::Variable(ident) => ident.fmt(f)?,
-                    _ => write!(f, "({})", expr)?,
-                }
-                f.write_str(".")?;
+            Expr::Field { base, field, deref } => {
+                write!(f, "{}", base)?;
+                f.write_str(if *deref { "->" } else { "." })?;
                 f.write_str(field)
             }
             Expr::Paren(expr) => write!(f, "({})", expr),
