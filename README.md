@@ -42,11 +42,15 @@ u32* foo() {
 * `while`, `loop`, `for i in 0..n {}`, `if-else`.
 * Primitives `u32`, `i32`, `usize`, ...
 * References `&x` and `*x`.
-* Structs and arrays.
+* Structs, unions and arrays.
 * No fancy `restrict`, `const` or `volatile` shenanigans.
 
 ## TODO
 * [ ] Some form of `use` modules
+* [ ] Stdlib access
+* [ ] char/string semantics
 * [ ] `static`s
 * [ ] Tuples?
 * [ ] Attributes for "annotations" (e.g. `volatile`)
+* [ ] Type inference?
+* [ ] Macros?
