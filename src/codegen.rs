@@ -1113,10 +1113,12 @@ impl<'a> Context<'a> {
 
     fn transform_lit(&mut self, lit: &syn::Lit) -> Expr {
         match lit {
+            // TODO: C suffixes? Preserve octal/hexadecimal?
             syn::Lit::Int(lit) => match lit.base10_parse() {
                 Ok(n) => return Expr::Integer(n),
                 Err(e) => self.fail(lit, &format!("Unable to parse integer: {}", e)),
             },
+            // TODO: C suffixes
             syn::Lit::Float(lit) => match lit.base10_parse() {
                 Ok(x) => return Expr::Float(x),
                 Err(e) => self.fail(lit, &format!("Unable to parse float: {}", e)),
@@ -1124,7 +1126,9 @@ impl<'a> Context<'a> {
             syn::Lit::Str(lit) => return Expr::String(lit.value()),
             syn::Lit::Bool(lit) => return Expr::Boolean(lit.value()),
             syn::Lit::Char(lit) => return Expr::Char(lit.value()),
+            // TODO: support
             syn::Lit::ByteStr(_) => self.fail(lit, unsupported!["Byte strings"]),
+            // TODO: support
             syn::Lit::Byte(_) => self.fail(lit, unsupported!["Byte literals"]),
             syn::Lit::Verbatim(_) => self.fail(lit, "Unsupported literal"),
         }

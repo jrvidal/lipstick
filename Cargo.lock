@@ -89,7 +89,7 @@ checksum = "8916b1f6ca17130ec6568feccee27c156ad12037880833a3b842a823236502e7"
 
 [[package]]
 name = "lipstick"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "codespan-reporting",

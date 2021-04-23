@@ -15,7 +15,7 @@ Also, it might be a good teaching tool, so you can temporarily "turn off" the bo
 fn foo() -> &u32 {
   let x: u32 = 7;
   let y: &u32 = &x;
-  return y;
+  y
 }
 ```
 
@@ -29,7 +29,8 @@ lipstick foo.rs
 #ifndef u32
 #define u32 uint32_t
 #endif
-u32* foo() {
+u32 * foo() ;
+u32 * foo() {
   u32 x = 7;
   u32 *y = &x;
   return y;
@@ -48,9 +49,11 @@ u32* foo() {
 ## TODO
 * [ ] Some form of `use` modules
 * [ ] Stdlib access
+* [ ] Preserve comments
 * [ ] char/string semantics
 * [ ] `static`s
 * [ ] Tuples?
 * [ ] Attributes for "annotations" (e.g. `volatile`)
 * [ ] Type inference?
 * [ ] Macros?
+* [ ] Map `cc` errors back to original source?
