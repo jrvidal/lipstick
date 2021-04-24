@@ -257,16 +257,23 @@ impl<'a> Context<'a> {
         );
         self.fail_opt(variadic, unsupported!["Variadic functions"]);
 
-        let ret = match output {
-            syn::ReturnType::Default => Declaration(
-                "void".to_string(),
-                Declarator {
-                    pointer: 0,
-                    ddecl: DirectDeclarator::Abstract,
-                },
-            ),
-            syn::ReturnType::Type(_, ty) => self.transform_declarator(None, ty).into(),
-        };
+        let mut noreturn = false;
+        let mut ret = Declaration(
+            "void".to_string(),
+            Declarator {
+                pointer: 0,
+                ddecl: DirectDeclarator::Abstract,
+            },
+        );
+
+        if let syn::ReturnType::Type(_, ty) = output {
+            match &**ty {
+                syn::Type::Never(_) => {
+                    noreturn = true;
+                }
+                _ => ret = self.transform_declarator(None, ty).into(),
+            }
+        }
 
         let mut args = vec![];
 
@@ -280,6 +287,7 @@ impl<'a> Context<'a> {
         }
 
         let signature = Signature {
+            noreturn,
             ret,
             name: ident.to_string(),
             args,
@@ -396,7 +404,10 @@ impl<'a> Context<'a> {
                 syn::Type::ImplTrait(_) => self.fail(ty, unsupported!["Impl trait" 1]),
                 syn::Type::Infer(_) => self.fail(ty, unsupported!["The inferred type `_`" 1]),
                 syn::Type::Macro(_) => self.fail(ty, unsupported!["Macros in type position"]),
-                syn::Type::Never(_) => self.fail(ty, unsupported!["The never type" 1]),
+                syn::Type::Never(_) => self.fail(
+                    ty,
+                    "The never type `!` is only supported as return type of a function",
+                ),
                 syn::Type::Paren(syn::TypeParen {
                     paren_token: _,
                     elem,
@@ -606,6 +617,7 @@ impl<'a> Context<'a> {
 
                 let inclusive = std::matches!(limits, syn::RangeLimits::Closed(_));
 
+                // TODO: infer variable type?
                 let (start, end) = match (from, to) {
                     (Some(from), Some(to)) => (self.transform_expr(from), self.transform_expr(to)),
                     _ => {

@@ -77,6 +77,7 @@ impl Display for Item {
 
 #[derive(Debug, Clone)]
 pub struct Signature {
+    pub noreturn: bool,
     pub ret: Declaration,
     pub name: String,
     pub args: Vec<(String, Declarator)>,
@@ -84,6 +85,9 @@ pub struct Signature {
 
 impl Display for Signature {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.noreturn {
+            f.write_str("_Noreturn ")?;
+        }
         self.ret.0.fmt(f)?;
         f.write_str(" ")?;
         self.ret.1.fmt(f)?;

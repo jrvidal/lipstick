@@ -38,13 +38,18 @@ u32 * foo() {
 ```
 
 ## Reference
-* No type inference, lifetimes, traits, generics, methods, `impl`s, visibility modifiers, paths, tuples, patterns, attributes, etc.
 * `match` &rarr; `switch`
+* `loop {...}` &rarr; `while (1) {...}`
+* `for i in 0..n {...}` &rarr; `for (uintptr_t i = 0; i < n; i++) {...}` (inclusive ranges too)
 * `while`, `loop`, `for i in 0..n {}`, `if-else`.
-* Primitives `u32`, `i32`, `usize`, ...
-* References `&x` and `*x`.
+* Rust-like primitives `u32`, `i32`, `usize`, ... can be used.
+* References and deref operator `&x` / `*x` can be used freely, no lifetimes!
 * Structs, unions and arrays.
+* `include![my_header]` or `include![<my_standard_header>]` for `#include` directives.
+* `foo.bar` &rarr; `foo.bar` or `foo->bar` when necessary
+* `fn foo() -> !` &rarr; `_Noreturn void foo()`
 * No fancy `restrict`, `const` or `volatile` shenanigans.
+* No type inference, lifetimes, traits, generics, methods, `impl`s, visibility modifiers, paths, tuples, patterns, attributes, etc.
 
 ## TODO
 * [ ] Some form of `use` modules
