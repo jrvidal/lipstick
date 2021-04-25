@@ -1,6 +1,11 @@
-# lipstick 💄🐷
+<div align="center">
+  <h1>lipstick 💄🐷</h1>
+  <img src="lipstick.svg" width="250"/>
 
 > You _can_ put lipstick on a pig
+
+</div>
+
 
 ## What
 `lipstick` compiles a subset of Rust's syntax into C. It's not a "Rust subset" though, since there's not borrow checker or lifetimes. It's simply a Rust-like syntax frontend for C.
