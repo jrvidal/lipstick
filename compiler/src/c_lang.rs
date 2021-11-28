@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 
 #[derive(Debug)]
-pub struct Program(pub Vec<Item>);
+pub(crate) struct Program(pub(crate) Vec<Item>);
 
 impl Display for Program {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -14,7 +14,7 @@ impl Display for Program {
 }
 
 #[derive(Debug)]
-pub enum Item {
+pub(crate) enum Item {
     Function(Signature, Block),
     FunctionDeclaration(Signature),
     Include(bool, String),
@@ -76,11 +76,11 @@ impl Display for Item {
 }
 
 #[derive(Debug, Clone)]
-pub struct Signature {
-    pub noreturn: bool,
-    pub ret: Declaration,
-    pub name: String,
-    pub args: Vec<(String, Declarator)>,
+pub(crate) struct Signature {
+    pub(crate) noreturn: bool,
+    pub(crate) ret: Declaration,
+    pub(crate) name: String,
+    pub(crate) args: Vec<(String, Declarator)>,
 }
 
 impl Display for Signature {
@@ -108,7 +108,7 @@ impl Display for Signature {
 }
 
 #[derive(Debug)]
-pub struct Block(pub Vec<Stmt>);
+pub(crate) struct Block(pub(crate) Vec<Stmt>);
 
 impl Display for Block {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -122,7 +122,7 @@ impl Display for Block {
 }
 
 #[derive(Debug)]
-pub enum Stmt {
+pub(crate) enum Stmt {
     Declaration(Declaration, Option<Expr>),
     Assignment(Expr, Expr),
     AssignmentOp(Expr, BinOp, Expr),
@@ -265,7 +265,7 @@ impl Display for Stmt {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub(crate) enum Expr {
     Integer(i64),
     String(String),
     Boolean(bool),
@@ -292,7 +292,7 @@ pub enum Expr {
 }
 
 impl Expr {
-    pub fn fallback() -> Self {
+    pub(crate) fn fallback() -> Self {
         Expr::Integer(0)
     }
 
@@ -321,7 +321,7 @@ impl Expr {
         }
     }
 
-    pub fn fix_precedence(&mut self) {
+    pub(crate) fn fix_precedence(&mut self) {
         let precedence = self.precedence();
         match self {
             Expr::Integer(_)
@@ -376,7 +376,7 @@ impl Expr {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum BinOp {
+pub(crate) enum BinOp {
     Add,
     Sub,
     Mul,
@@ -585,10 +585,10 @@ impl Display for Expr {
 }
 
 #[derive(Debug, Clone)]
-pub struct Declaration(pub String, pub Declarator);
+pub(crate) struct Declaration(pub(crate) String, pub(crate) Declarator);
 
 impl Declaration {
-    pub fn fallback() -> Self {
+    pub(crate) fn fallback() -> Self {
         Declaration("u32".to_string(), Declarator::fallback())
     }
 }
@@ -600,13 +600,13 @@ impl From<(String, Declarator)> for Declaration {
 }
 
 #[derive(Debug, Clone)]
-pub struct Declarator {
-    pub pointer: u8,
-    pub ddecl: DirectDeclarator,
+pub(crate) struct Declarator {
+    pub(crate) pointer: u8,
+    pub(crate) ddecl: DirectDeclarator,
 }
 
 impl Declarator {
-    pub fn fallback() -> Self {
+    pub(crate) fn fallback() -> Self {
         Declarator {
             pointer: 0,
             ddecl: DirectDeclarator::Ident("fallback__".to_string()),
@@ -615,7 +615,7 @@ impl Declarator {
 }
 
 #[derive(Debug, Clone)]
-pub enum DirectDeclarator {
+pub(crate) enum DirectDeclarator {
     Abstract,
     Ident(String),
     Paren(Box<Declarator>),

@@ -1,18 +1,2 @@
-[package]
-name = "lipstick"
-version = "0.3.0"
-authors = ["Roberto Vidal <vidal.roberto.j@gmail.com>"]
-edition = "2021"
-repository = "https://github.com/jrvidal/lipstick"
-description = "Lipstick for C"
-license = "GPL-3.0-or-later"
-
-[features]
-dev = ["syn/extra-traits"]
-
-[dependencies]
-clap = "2.33.3"
-codespan-reporting = "0.11.1"
-proc-macro2 = { version = "1.0.32", features = ["span-locations"] }
-string-interner = "0.12.2"
-syn = { version = "1.0.82", default-features = false, features = ["full", "parsing", "printing", "visit"] }
+[workspace]
+members = ["cli", "compiler"]

@@ -29,7 +29,7 @@ impl StringInterner {
     }
 }
 
-pub struct Ref<'a, T>(&'a T);
+pub(crate) struct Ref<'a, T>(&'a T);
 
 impl<'a, T> From<&'a T> for Ref<'a, T> {
     fn from(ref_: &'a T) -> Self {
@@ -64,7 +64,7 @@ impl<'a, T> PartialEq for Ref<'a, T> {
 impl<'a, T> Eq for Ref<'a, T> {}
 impl<'a, T> Copy for Ref<'a, T> {}
 
-pub type Scope<'a> = Ref<'a, Block>;
+pub(crate) type Scope<'a> = Ref<'a, Block>;
 
 #[derive(Default)]
 struct ScopeInfo<'a> {
@@ -72,7 +72,7 @@ struct ScopeInfo<'a> {
     vars: HashMap<String, Type>,
 }
 
-pub struct TypeInfo<'a> {
+pub(crate) struct TypeInfo<'a> {
     cache: HashMap<Ref<'a, Expr>, Type>,
     exprs: HashMap<Ref<'a, Expr>, Scope<'a>>,
     scopes: HashMap<Scope<'a>, ScopeInfo<'a>>,
@@ -81,7 +81,7 @@ pub struct TypeInfo<'a> {
 }
 
 impl<'a> TypeInfo<'a> {
-    pub fn needs_deref(&self, expr: &'a Expr, field: &str) -> bool {
+    pub(crate) fn needs_deref(&self, expr: &'a Expr, field: &str) -> bool {
         let ty = self.type_of(expr);
         if let Type::Ref(ty) = ty {
             Some(*ty)
@@ -233,7 +233,7 @@ impl Default for TypeInfo<'_> {
     }
 }
 
-pub fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, CompilationError> {
+pub(crate) fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, CompilationError> {
     let mut info: TypeInfo = Default::default();
     let mut seen = HashSet::new();
     let mut errors = vec![];
@@ -334,7 +334,7 @@ pub fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, CompilationError> 
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct TypeId(usize);
+pub(crate) struct TypeId(usize);
 
 impl string_interner::Symbol for TypeId {
     fn try_from_usize(index: usize) -> Option<Self> {
@@ -353,7 +353,7 @@ enum DeclaredType {
 }
 
 #[derive(Clone, Debug)]
-pub enum Type {
+pub(crate) enum Type {
     Named(TypeId),
     Array(Box<Type>),
     Ref(Box<Type>),

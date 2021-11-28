@@ -1214,7 +1214,7 @@ impl<'a> Context<'a> {
     }
 }
 
-pub fn transform<'a>(
+pub(crate) fn transform<'a>(
     file: &'a syn::File,
     type_info: TypeInfo<'a>,
 ) -> std::result::Result<Program, CompilationError> {
