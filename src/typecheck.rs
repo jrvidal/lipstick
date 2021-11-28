@@ -102,6 +102,7 @@ impl<'a> TypeInfo<'a> {
         })
         .unwrap_or(false)
     }
+
     fn type_of(&self, expr: &'a Expr) -> Type {
         self.cache.get(&expr.into()).cloned().unwrap_or_else(|| {
             let ty = self.compute_type_of(expr);

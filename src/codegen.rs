@@ -53,6 +53,7 @@ impl<'a> Context<'a> {
 
     fn transform_item(&mut self, item: &syn::Item, prefix: &mut Vec<Item>, out: &mut Vec<Item>) {
         let mut fail = |msg: &str| self.fail(item, &format!("{} are not supported", msg));
+
         match item {
             syn::Item::Const(_) => fail("Const items"),
             syn::Item::Enum(_) => fail("Enums"),

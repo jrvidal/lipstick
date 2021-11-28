@@ -91,7 +91,9 @@ fn main() -> Result<(), Error> {
     }
 
     let sess = Session::new(file_name)?;
+
     let compiled = sess.compile().unwrap_or_else(|e| e.report(&sess));
+
     let (mut outfile, out): (Box<dyn Write>, _) = match matches.value_of("out") {
         Some(out) => {
             if out == "-" {
@@ -156,6 +158,7 @@ impl<'a> Session<'a> {
             })?;
 
         let type_info = typecheck::check(&syn_file).map_err(|e| self.map_err(e))?;
+
         match codegen::transform(&syn_file, type_info) {
             Ok(program) => Ok(program),
             Err(e) => Err(self.map_err(e)),
@@ -215,6 +218,7 @@ impl SessionError {
             "Compilation failed due to {} errors",
             self.diagnostics.len()
         );
+
         std::process::exit(1);
     }
 }
