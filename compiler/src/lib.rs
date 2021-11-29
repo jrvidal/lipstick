@@ -10,8 +10,6 @@ use codespan_reporting::{
 };
 use proc_macro2::{LineColumn, Span};
 
-type Error = Box<dyn std::error::Error>;
-
 mod c_lang;
 mod codegen;
 mod typecheck;
@@ -23,76 +21,58 @@ pub struct Session {
 
 impl Session {
     /// Creates a compilation session from a source file
-    pub fn new(file_name: &str) -> Result<Self, Error> {
-        let source = std::fs::read_to_string(file_name)?;
-
-        Ok(Self {
-            files: SimpleFile::new(file_name.to_string(), source),
-        })
+    pub fn new(file_name: String, source: String) -> Self {
+        Self {
+            files: SimpleFile::new(file_name, source),
+        }
     }
 
     #[cfg(feature = "dev")]
-    pub fn debug(&self) -> Result<String, Error> {
-        Ok(format!(
-            "{:#?}",
-            syn::parse_file(&self.files.source())?
-        ))
+    pub fn debug(&self) -> Result<String, Box<dyn std::error::Error>> {
+        Ok(format!("{:#?}", syn::parse_file(&self.files.source())?))
     }
 
     /// Compiles the program into something ready to be printed as C code
     pub fn compile(&self) -> Result<impl Display, SessionError> {
-        let syn_file = syn::parse_file(self.files.source())
-            .map_err(|e| {
-                Diagnostic::error()
-                    .with_message(format!("{}", e))
-                    .with_labels(vec![Label::primary((), self.span_to_range(e.span()))])
-            })
-            .map_err(|d| SessionError {
-                diagnostics: vec![d],
-                files: &self.files
-            })?;
+        let syn_file = syn::parse_file(self.files.source()).map_err(|e| {
+            let error = CompilationError {
+                msg: format!("{}", e),
+                span: e.span(),
+            };
 
-        let type_info = typecheck::check(&syn_file).map_err(|e| self.map_err(e))?;
+            SessionError {
+                errors: vec![error],
+                syntax: true,
+                files: &self.files,
+            }
+        })?;
+
+        let type_info = typecheck::check(&syn_file).map_err(|e| SessionError {
+            errors: e.errors,
+            files: &self.files,
+            syntax: false,
+        })?;
 
         match codegen::transform(&syn_file, type_info) {
             Ok(program) => Ok(program),
-            Err(e) => Err(self.map_err(e)),
+            Err(e) => Err(SessionError {
+                errors: e.errors,
+                syntax: false,
+                files: &self.files,
+            }),
         }
-    }
-
-    fn map_err(&self, error: CompilationError) -> SessionError<'_> {
-        let diagnostics = error
-            .diagnostics
-            .into_iter()
-            .map(|d| {
-                Diagnostic::error()
-                    .with_message(d.msg)
-                    .with_labels(vec![Label::primary((), self.span_to_range(d.span))])
-            })
-            .collect();
-
-        SessionError { diagnostics, files: &self.files }
-    }
-
-    fn span_to_range(&self, span: Span) -> Range<usize> {
-        self.linecolumn_to_index(span.start())..self.linecolumn_to_index(span.end())
-    }
-
-    fn linecolumn_to_index(&self, linecol: LineColumn) -> usize {
-        let range = self.files.line_range((), linecol.line - 1).unwrap();
-        self.files.source()[range.start..]
-            .char_indices()
-            .skip(linecol.column)
-            .next()
-            .unwrap()
-            .0
-            + range.start
     }
 }
 
 /// An error during compilation
 pub struct SessionError<'a> {
-    diagnostics: Vec<Diagnostic<()>>,
+    /// Whether the error is due to parsing
+    pub syntax: bool,
+
+    /// the individual errors
+    pub errors: Vec<CompilationError>,
+
+    // diagnostics: Vec<Diagnostic<()>>,
     files: &'a SimpleFile<String, String>,
 }
 
@@ -107,29 +87,50 @@ impl<'a> SessionError<'a> {
         std::process::exit(1);
     }
 
-    /// Reports the error to a given writer
-    pub fn report_to_writer(self, writer: &mut dyn codespan_reporting::term::termcolor::WriteColor) {
-        for diagnostic in &self.diagnostics {
-            term::emit(
-                writer,
-                &term::Config::default(),
-                self.files,
-                diagnostic,
-            )
-            .unwrap()
+    fn report_to_writer(mut self, writer: &mut dyn codespan_reporting::term::termcolor::WriteColor) {
+        let n_of_errors = self.errors.len();
+
+        let errors = {
+            let mut errors = vec![];
+
+            std::mem::swap(&mut errors, &mut self.errors);
+
+            errors
+        };
+
+        for diagnostic in errors.into_iter().map(|err| self.map_err(err)) {
+            term::emit(writer, &term::Config::default(), self.files, &diagnostic).unwrap()
         }
 
-        write!(
-            writer,
-            "Compilation failed due to {} errors",
-            self.diagnostics.len()
-        ).unwrap();
+        write!(writer, "Compilation failed due to {} errors", n_of_errors).unwrap();
+    }
+
+    fn map_err(&self, error: CompilationError) -> Diagnostic<()> {
+        Diagnostic::error()
+            .with_message(error.msg)
+            .with_labels(vec![Label::primary((), self.span_to_range(error.span))])
+    }
+
+    fn span_to_range(&self, span: Span) -> Range<usize> {
+        self.linecolumn_to_index(span.start())..self.linecolumn_to_index(span.end())
+    }
+
+    fn linecolumn_to_index(&self, linecol: LineColumn) -> usize {
+        let range = self.files.line_range((), linecol.line - 1).unwrap();
+
+        self.files.source()[range.start..]
+            .char_indices()
+            .skip(linecol.column)
+            .next()
+            .unwrap()
+            .0
+            + range.start
     }
 }
 
 impl<'a> Display for SessionError<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        std::writeln!(f, "Failed due to {} errors", self.diagnostics.len())
+        std::writeln!(f, "Failed due to {} errors", self.errors.len())
     }
 }
 
@@ -141,20 +142,21 @@ impl<'a> Debug for SessionError<'a> {
 
 impl<'a> std::error::Error for SessionError<'a> {}
 
+/// A compilation error
 #[derive(Debug)]
-struct CodeError {
+pub struct CompilationError {
     pub span: Span,
     pub msg: String,
 }
 
 #[derive(Debug)]
-struct CompilationError {
-    pub diagnostics: Vec<CodeError>,
+struct CompilationErrors {
+    errors: Vec<CompilationError>,
 }
 
-impl Display for CompilationError {
+impl Display for CompilationErrors {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for error in &self.diagnostics {
+        for error in &self.errors {
             writeln!(f, "Error: {} ({:?})", error.msg, error.span)?;
         }
 
@@ -162,4 +164,4 @@ impl Display for CompilationError {
     }
 }
 
-impl std::error::Error for CompilationError {}
+impl std::error::Error for CompilationErrors {}

@@ -9,7 +9,7 @@ use syn::{
     Block, Expr,
 };
 
-use super::{CodeError as Error, CompilationError};
+use super::{CompilationError as Error, CompilationErrors};
 
 struct StringInterner(std::cell::RefCell<string_interner::StringInterner<TypeId>>);
 
@@ -233,7 +233,7 @@ impl Default for TypeInfo<'_> {
     }
 }
 
-pub(crate) fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, CompilationError> {
+pub(crate) fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, CompilationErrors> {
     let mut info: TypeInfo = Default::default();
     let mut seen = HashSet::new();
     let mut errors = vec![];
@@ -327,9 +327,7 @@ pub(crate) fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, Compilation
     if errors.is_empty() {
         Ok(info)
     } else {
-        Err(CompilationError {
-            diagnostics: errors,
-        })
+        Err(CompilationErrors { errors })
     }
 }
 

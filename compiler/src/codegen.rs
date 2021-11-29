@@ -1,7 +1,8 @@
+use proc_macro2::Span;
 use proc_macro2::TokenTree;
 use syn::spanned::Spanned;
 
-use super::{CodeError as Error, CompilationError};
+use super::{CompilationError as Error, CompilationErrors};
 use crate::c_lang::{
     BinOp, Block, Declaration, Declarator, DirectDeclarator, Expr, Item, Program, Signature, Stmt,
 };
@@ -22,7 +23,7 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    fn transform(mut self, file: &syn::File) -> std::result::Result<Program, CompilationError> {
+    fn transform(mut self, file: &syn::File) -> std::result::Result<Program, CompilationErrors> {
         let syn::File {
             shebang,
             attrs,
@@ -36,8 +37,20 @@ impl<'a> Context<'a> {
         decls.extend(prelude());
         let mut suffix = vec![];
 
+        let mut use_decls = vec![];
+
         for item in items {
-            self.transform_item(item, &mut decls, &mut suffix);
+            self.transform_item(item, &mut decls, &mut suffix, &mut use_decls);
+        }
+
+        if use_decls.len() > 0 {
+            let last = use_decls.last().unwrap().clone();
+            let span = use_decls[0].join(last).unwrap();
+
+            self.errors.insert(0, Error {
+                span,
+                msg: unsupported!["\"use\" declarations"].to_string(),
+            });
         }
 
         decls.extend(suffix);
@@ -45,13 +58,13 @@ impl<'a> Context<'a> {
         if self.errors.is_empty() {
             Ok(Program(decls))
         } else {
-            Err(CompilationError {
-                diagnostics: self.errors,
+            Err(CompilationErrors {
+                errors: self.errors,
             })
         }
     }
 
-    fn transform_item(&mut self, item: &syn::Item, prefix: &mut Vec<Item>, out: &mut Vec<Item>) {
+    fn transform_item(&mut self, item: &syn::Item, prefix: &mut Vec<Item>, out: &mut Vec<Item>, use_decls: &mut Vec<Span>) {
         let mut fail = |msg: &str| self.fail(item, &format!("{} are not supported", msg));
 
         match item {
@@ -68,13 +81,18 @@ impl<'a> Context<'a> {
                 semi_token: _,
             }) => {
                 self.fail_attrs(attrs);
-                self.fail_opt(ident, unsupported!["macro_rules-style macros"]);
+
+                if self.fail_opt(&ident.as_ref().map(|_| item), unsupported!["macro_rules-style macros"]) {
+                    return;
+                }
+
                 let syn::Macro {
                     path,
                     bang_token: _,
                     delimiter: _,
                     tokens,
                 } = mac;
+
                 let ident = match self.path_to_ident(path) {
                     Some(ident) => ident,
                     _ => return,
@@ -143,13 +161,14 @@ impl<'a> Context<'a> {
                         None
                     }
                     syn::Fields::Unit => {
-                        self.fail(item_fields, unsupported!["Unit structs"]);
+                        self.fail(item, unsupported!["Unit structs"]);
                         None
                     }
                 };
+
                 let fields = self.transform_composite(attrs, vis, generics, named_fields);
 
-                if item_fields.is_empty() {
+                if item_fields.is_empty() && named_fields.is_some() {
                     self.fail(item, unsupported!["Empty structs"]);
                 }
 
@@ -171,7 +190,9 @@ impl<'a> Context<'a> {
                 prefix.push(Item::UnionTypedef(ident.to_string()));
                 out.push(Item::Union(ident.to_string(), fields));
             }
-            syn::Item::Use(_) => fail("Use declarations"),
+            syn::Item::Use(_) => {
+                use_decls.push(item.span());
+            },
             syn::Item::Verbatim(_) => self.fail(item, "Unexpected tokens"),
             syn::Item::__TestExhaustive(_) => unreachable!(),
         }
@@ -209,6 +230,7 @@ impl<'a> Context<'a> {
         {
             self.fail_attrs(attrs);
             self.fail_vis(vis);
+
             fields.push(
                 self.transform_declarator(
                     field_ident
@@ -738,7 +760,7 @@ impl<'a> Context<'a> {
                     } else {
                         self.fail(
                             body,
-                            "Match expression only support blocks as bodies in each arm",
+                            "Match expressions only support blocks as bodies in each arm",
                         );
                         continue;
                     };
@@ -766,7 +788,7 @@ impl<'a> Context<'a> {
                             continue;
                         }
                         _ => {
-                            self.fail(pat, "Match expressions only support variables and literals");
+                            self.fail(pat, "Match expressions only support variables and literals as patterns");
                             continue;
                         }
                     }
@@ -1150,11 +1172,18 @@ impl<'a> Context<'a> {
 
     fn path_to_ident(&mut self, path: &syn::Path) -> Option<String> {
         if let Some(ident) = path.get_ident() {
-            Some(ident.to_string())
-        } else {
-            self.fail(path, unsupported!["Paths"]);
-            None
+            return Some(ident.to_string());
         }
+
+        for segment in &path.segments {
+            if !std::matches!(segment.arguments, syn::PathArguments::None) {
+                self.fail(path, unsupported!["Generics"]);
+                return None;
+            }
+        }
+
+        self.fail(path, unsupported!["Paths"]);
+        None
     }
 
     fn fail<S: Spanned>(&mut self, item: S, msg: &str) {
@@ -1217,7 +1246,7 @@ impl<'a> Context<'a> {
 pub(crate) fn transform<'a>(
     file: &'a syn::File,
     type_info: TypeInfo<'a>,
-) -> std::result::Result<Program, CompilationError> {
+) -> std::result::Result<Program, CompilationErrors> {
     let ctx = Context {
         errors: vec![],
         type_info,

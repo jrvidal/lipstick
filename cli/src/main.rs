@@ -1,8 +1,4 @@
-use std::{
-    fs,
-    io::Write,
-    process::Command,
-};
+use std::{fs, io::Write, process::Command};
 
 use clap::{App, Arg};
 use compiler::Session;
@@ -70,8 +66,9 @@ fn main() -> Result<(), Error> {
     let matches = app.get_matches();
     let file_name = matches.value_of("filename").unwrap();
 
+    let source = std::fs::read_to_string(file_name)?;
 
-    let sess = Session::new(file_name)?;
+    let sess = Session::new(file_name.to_string(), source);
 
     #[cfg(feature = "dev")]
     if matches.value_of("Z") == Some("syn") {
