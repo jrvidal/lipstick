@@ -205,24 +205,24 @@ impl Display for Stmt {
                 f.write_str(") ")?;
                 block.fmt(f)
             }
-            Stmt::Labeled(label, stmt) => {
-                f.write_str(&label)?;
-                f.write_str(": ")?;
-                stmt.fmt(f)
+            Stmt::Labeled(label, stmt) => LabeledStmt {
+                stmt: &*stmt,
+                label: Some(&label[..]),
             }
+            .fmt(f),
             Stmt::Break(label) => {
-                f.write_str("break")?;
                 if let Some(label) = label {
-                    write!(f, " {}", label)?;
+                    write!(f, "goto __break_{};\n", label)
+                } else {
+                    f.write_str("break;\n")
                 }
-                f.write_str(";\n")
             }
             Stmt::Continue(label) => {
-                f.write_str("continue")?;
                 if let Some(label) = label {
-                    write!(f, " {}", label)?;
+                    write!(f, "goto __continue_{};\n", label)
+                } else {
+                    f.write_str("continue;\n")
                 }
-                f.write_str(";\n")
             }
             Stmt::For {
                 ident,
@@ -260,6 +260,89 @@ impl Display for Stmt {
 
                 f.write_str("}\n")
             }
+        }
+    }
+}
+
+struct LabeledStmt<'a> {
+    stmt: &'a Stmt,
+    label: Option<&'a str>,
+}
+
+impl<'a> From<&'a Stmt> for LabeledStmt<'a> {
+    fn from(stmt: &'a Stmt) -> Self {
+        Self { stmt, label: None }
+    }
+}
+
+impl<'a> Display for LabeledStmt<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.stmt {
+            Stmt::While { test, block } => {
+                f.write_str("while (")?;
+                test.fmt(f)?;
+                f.write_str(") ")?;
+                LabeledBlock {
+                    block,
+                    label: self.label,
+                }
+                .fmt(f)
+            }
+            Stmt::For {
+                ident,
+                inclusive,
+                range,
+                block,
+            } => {
+                let op = if *inclusive { "<=" } else { "<" };
+                writeln!(
+                    f,
+                    "for (usize {ident} = {start}; {ident} {op} {end}; {ident}++) ",
+                    ident = ident,
+                    op = op,
+                    start = range.0,
+                    end = range.1
+                )?;
+                LabeledBlock {
+                    block,
+                    label: self.label,
+                }
+                .fmt(f)
+            }
+            _ => self.stmt.fmt(f),
+        }
+    }
+}
+
+struct LabeledBlock<'a> {
+    block: &'a Block,
+    label: Option<&'a str>,
+}
+
+impl<'a> From<&'a Block> for LabeledBlock<'a> {
+    fn from(block: &'a Block) -> Self {
+        Self { block, label: None }
+    }
+}
+
+impl<'a> Display for LabeledBlock<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("{\n")?;
+        for stmt in &self.block.0 {
+            f.write_str("  ")?;
+            stmt.fmt(f)?;
+        }
+
+        if let Some(label) = self.label {
+            write!(f, "__continue_{}: {{}};\n", label)?;
+        }
+
+        f.write_str("}\n")?;
+
+        if let Some(label) = self.label {
+            write!(f, "__break_{}: {{}};", label)
+        } else {
+            Ok(())
         }
     }
 }

@@ -47,10 +47,13 @@ impl<'a> Context<'a> {
             let last = use_decls.last().unwrap().clone();
             let span = use_decls[0].join(last).unwrap();
 
-            self.errors.insert(0, Error {
-                span,
-                msg: unsupported!["\"use\" declarations"].to_string(),
-            });
+            self.errors.insert(
+                0,
+                Error {
+                    span,
+                    msg: unsupported!["\"use\" declarations"].to_string(),
+                },
+            );
         }
 
         decls.extend(suffix);
@@ -64,7 +67,13 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn transform_item(&mut self, item: &syn::Item, prefix: &mut Vec<Item>, out: &mut Vec<Item>, use_decls: &mut Vec<Span>) {
+    fn transform_item(
+        &mut self,
+        item: &syn::Item,
+        prefix: &mut Vec<Item>,
+        out: &mut Vec<Item>,
+        use_decls: &mut Vec<Span>,
+    ) {
         let mut fail = |msg: &str| self.fail(item, &format!("{} are not supported", msg));
 
         match item {
@@ -82,7 +91,10 @@ impl<'a> Context<'a> {
             }) => {
                 self.fail_attrs(attrs);
 
-                if self.fail_opt(&ident.as_ref().map(|_| item), unsupported!["macro_rules-style macros"]) {
+                if self.fail_opt(
+                    &ident.as_ref().map(|_| item),
+                    unsupported!["macro_rules-style macros"],
+                ) {
                     return;
                 }
 
@@ -106,41 +118,64 @@ impl<'a> Context<'a> {
                 const USAGE: &str =
                     "include! can be invoked as `include!(file)` or `include!(<header>)`";
 
-                let tokens: Vec<_> = tokens.clone().into_iter().collect();
-                if tokens.len() != 1 && tokens.len() != 3 {
-                    self.fail(item, USAGE);
+                let mut tokens: Vec<_> = tokens.clone().into_iter().collect();
+
+                if tokens.len() == 1 {
+                    let header = match &tokens[0] {
+                        TokenTree::Ident(ident) => ident.to_string(),
+                        _ => {
+                            self.fail(item, USAGE);
+                            return;
+                        }
+                    };
+
+                    out.push(Item::Include(false, header));
                     return;
                 }
-
-                let header_token = if tokens.len() == 1 {
-                    &tokens[0]
-                } else {
-                    &tokens[1]
-                };
-
-                let header = match header_token {
-                    TokenTree::Ident(ident) => ident.to_string(),
-                    _ => {
-                        self.fail(item, USAGE);
-                        return;
-                    }
-                };
 
                 let is_char = |tt: &TokenTree, c| match tt {
                     TokenTree::Punct(punct) => punct.as_char() == c,
                     _ => false,
                 };
 
-                if tokens.len() == 3 {
-                    if is_char(&tokens[0], '<') && is_char(&tokens[2], '>') {
-                        // OK
-                    } else {
-                        self.fail(item, USAGE);
-                        return;
+                if tokens.len() < 3
+                    || !(is_char(&tokens[0], '<')
+                        && tokens.last().map(|tok| is_char(tok, '>')).unwrap_or(false))
+                {
+                    self.fail(item, USAGE);
+                    return;
+                }
+
+                let _ = tokens.pop();
+                let _ = tokens.remove(0);
+
+                let mut component = true;
+
+                let mut path = String::new();
+
+                for comp in &tokens {
+                    match (comp, component) {
+                        (TokenTree::Ident(ident), true) => {
+                            path += &ident.to_string();
+                            component = false;
+                        }
+                        (TokenTree::Punct(punct), false) if punct.as_char() == '/' => {
+                            path += "/";
+                            component = true;
+                        }
+                        _ => {
+                            self.fail(item, USAGE);
+                            return;
+                        }
                     }
                 }
 
-                out.push(Item::Include(tokens.len() == 3, header));
+                if component {
+                    self.fail(item, USAGE);
+                    return;
+                }
+
+                out.push(Item::Include(true, path))
             }
             syn::Item::Macro2(_) => fail("Macros"),
             syn::Item::Mod(_) => fail("Modules"),
@@ -192,7 +227,7 @@ impl<'a> Context<'a> {
             }
             syn::Item::Use(_) => {
                 use_decls.push(item.span());
-            },
+            }
             syn::Item::Verbatim(_) => self.fail(item, "Unexpected tokens"),
             syn::Item::__TestExhaustive(_) => unreachable!(),
         }
@@ -577,7 +612,7 @@ impl<'a> Context<'a> {
                 let stmt = Stmt::Block(block);
                 match label {
                     Some(label) => {
-                        push![self, state, out; Stmt::Labeled(label.name.to_string(), stmt.into())];
+                        push![self, state, out; Stmt::Labeled(label.name.ident.to_string(), stmt.into())];
                     }
                     None => {
                         push![self, state, out; stmt];
@@ -592,7 +627,7 @@ impl<'a> Context<'a> {
             }) => {
                 self.fail_attrs(attrs);
                 self.fail_opt(expr, unsupported!["Break values"]);
-                push![self, state, out; Stmt::Break(label.as_ref().map(|lf| lf.to_string()))];
+                push![self, state, out; Stmt::Break(label.as_ref().map(|lf| lf.ident.to_string()))];
             }
             syn::Expr::Continue(syn::ExprContinue {
                 attrs,
@@ -660,7 +695,7 @@ impl<'a> Context<'a> {
                 };
 
                 if let Some(label) = label {
-                    out.push(Stmt::Labeled(label.name.to_string(), for_loop.into()));
+                    out.push(Stmt::Labeled(label.name.ident.to_string(), for_loop.into()));
                 } else {
                     out.push(for_loop);
                 }
@@ -720,7 +755,7 @@ impl<'a> Context<'a> {
                 };
 
                 if let Some(label) = label {
-                    push![self, state, out ; Stmt::Labeled(label.name.to_string(), while_stmt.into())];
+                    push![self, state, out ; Stmt::Labeled(label.name.ident.to_string(), while_stmt.into())];
                 } else {
                     push![self, state, out ; while_stmt];
                 }
@@ -788,7 +823,10 @@ impl<'a> Context<'a> {
                             continue;
                         }
                         _ => {
-                            self.fail(pat, "Match expressions only support variables and literals as patterns");
+                            self.fail(
+                                pat,
+                                "Match expressions only support variables and literals as patterns",
+                            );
                             continue;
                         }
                     }
@@ -824,7 +862,7 @@ impl<'a> Context<'a> {
                 let while_stmt = Stmt::While { test, block };
 
                 if let Some(label) = label {
-                    push![self, state, out ; Stmt::Labeled(label.name.to_string(), while_stmt.into())];
+                    push![self, state, out ; Stmt::Labeled(label.name.ident.to_string(), while_stmt.into())];
                 } else {
                     push![self, state, out ; while_stmt];
                 }
@@ -1243,14 +1281,15 @@ impl<'a> Context<'a> {
     }
 }
 
-pub(crate) fn transform<'a>(
-    file: &'a syn::File,
-    type_info: TypeInfo<'a>,
+pub(crate) fn transform(
+    file: &syn::File,
+    type_info: TypeInfo<'_>,
 ) -> std::result::Result<Program, CompilationErrors> {
     let ctx = Context {
         errors: vec![],
         type_info,
     };
+
     ctx.transform(file)
 }
 

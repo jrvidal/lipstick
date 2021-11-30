@@ -87,7 +87,10 @@ impl<'a> SessionError<'a> {
         std::process::exit(1);
     }
 
-    fn report_to_writer(mut self, writer: &mut dyn codespan_reporting::term::termcolor::WriteColor) {
+    fn report_to_writer(
+        mut self,
+        writer: &mut dyn codespan_reporting::term::termcolor::WriteColor,
+    ) {
         let n_of_errors = self.errors.len();
 
         let errors = {
