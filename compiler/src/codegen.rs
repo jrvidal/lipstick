@@ -6,6 +6,7 @@ use super::{CompilationError as Error, CompilationErrors};
 use crate::c_lang::{
     BinOp, Block, Declaration, Declarator, DirectDeclarator, Expr, Item, Program, Signature, Stmt,
 };
+use crate::typecheck::Builtins;
 use crate::typecheck::TypeInfo;
 
 macro_rules! unsupported {
@@ -34,7 +35,7 @@ impl<'a> Context<'a> {
         self.fail_attrs(attrs);
 
         let mut decls = vec![];
-        decls.extend(prelude());
+        decls.extend(prelude(&self.type_info.builtins));
         let mut suffix = vec![];
 
         let mut use_decls = vec![];
@@ -1261,7 +1262,7 @@ impl<'a> Context<'a> {
     }
 
     fn fail_attrs(&mut self, attrs: &[syn::Attribute]) -> bool {
-        self.fail_iter(attrs.iter(), "Attributes are not suppor1ted")
+        self.fail_iter(attrs.iter(), "Attributes are not supported")
     }
 
     fn fail_vis(&mut self, vis: &syn::Visibility) {
@@ -1293,28 +1294,48 @@ pub(crate) fn transform(
     ctx.transform(file)
 }
 
-fn prelude() -> Vec<Item> {
-    let mut ret = vec![
-        Item::Include(true, "stdint".to_string()),
-        Item::Include(true, "stdbool".to_string()),
-    ];
+fn prelude(builtins: &Builtins) -> Vec<Item> {
+    let mut ret = vec![];
 
-    for (rust, c) in &[
+    let stdint = builtins.u64
+        || builtins.i64
+        || builtins.u32
+        || builtins.i32
+        || builtins.u16
+        || builtins.i16
+        || builtins.u8
+        || builtins.i8
+        || builtins.usize
+        || builtins.isize;
+
+    let stdbool = builtins.bool;
+
+    if stdint {
+        ret.push(Item::Include(true, "stdint".to_string()));
+    }
+
+    if stdbool {
+        ret.push(Item::Include(true, "stdbool".to_string()));
+    }
+
+    for (rust, c, should_include) in &[
         // TODO: Well, this is wishful thinking at best... Maybe add some static assertions?
-        ("f32", "float"),
-        ("f64", "double"),
-        ("u64", "uint64_t"),
-        ("i64", "int64_t"),
-        ("u32", "uint32_t"),
-        ("i32", "int32_t"),
-        ("u16", "uint16_t"),
-        ("i16", "int16_t"),
-        ("u8", "uint8_t"),
-        ("i8", "int8_t"),
-        ("usize", "uintptr_t"),
-        ("isize", "intptr_t"),
+        ("f32", "float", builtins.f32),
+        ("f64", "double", builtins.f64),
+        ("u64", "uint64_t", builtins.u64),
+        ("i64", "int64_t", builtins.i64),
+        ("u32", "uint32_t", builtins.u32),
+        ("i32", "int32_t", builtins.i32),
+        ("u16", "uint16_t", builtins.u16),
+        ("i16", "int16_t", builtins.i16),
+        ("u8", "uint8_t", builtins.u8),
+        ("i8", "int8_t", builtins.i8),
+        ("usize", "uintptr_t", builtins.usize),
+        ("isize", "intptr_t", builtins.isize),
     ] {
-        ret.push(Item::Ifndef(rust.to_string(), c.to_string()));
+        if *should_include {
+            ret.push(Item::Ifndef(rust.to_string(), c.to_string()));
+        }
     }
     ret
 }

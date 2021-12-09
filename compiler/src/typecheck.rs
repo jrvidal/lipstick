@@ -29,7 +29,7 @@ impl StringInterner {
     }
 }
 
-pub(crate) struct Ref<'a, T>(&'a T);
+struct Ref<'a, T>(&'a T);
 
 impl<'a, T> From<&'a T> for Ref<'a, T> {
     fn from(ref_: &'a T) -> Self {
@@ -64,7 +64,7 @@ impl<'a, T> PartialEq for Ref<'a, T> {
 impl<'a, T> Eq for Ref<'a, T> {}
 impl<'a, T> Copy for Ref<'a, T> {}
 
-pub(crate) type Scope<'a> = Ref<'a, Block>;
+type Scope<'a> = Ref<'a, Block>;
 
 #[derive(Default)]
 struct ScopeInfo<'a> {
@@ -78,6 +78,24 @@ pub(crate) struct TypeInfo<'a> {
     scopes: HashMap<Scope<'a>, ScopeInfo<'a>>,
     declared_types: HashMap<TypeId, DeclaredType>,
     type_names: StringInterner,
+    pub builtins: Builtins,
+}
+
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Builtins {
+    pub u8: bool,
+    pub u16: bool,
+    pub u32: bool,
+    pub u64: bool,
+    pub i8: bool,
+    pub i16: bool,
+    pub i32: bool,
+    pub i64: bool,
+    pub f32: bool,
+    pub f64: bool,
+    pub bool: bool,
+    pub usize: bool,
+    pub isize: bool,
 }
 
 impl<'a> TypeInfo<'a> {
@@ -229,6 +247,7 @@ impl Default for TypeInfo<'_> {
             scopes: Default::default(),
             declared_types: Default::default(),
             type_names: StringInterner::new(),
+            builtins: Default::default()
         }
     }
 }
@@ -280,13 +299,16 @@ pub(crate) fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, Compilation
                 Some((ident.to_string(), ty))
             })
             .collect();
+
         let type_id = info.type_names.get_or_intern(ident.to_string());
+
         if !seen.insert(type_id) {
             errors.push(Error {
                 msg: format!("Repeated declaration for {}", ident),
                 span: item.span(),
             });
         }
+
         info.declared_types
             .insert(type_id, DeclaredType::Composite(field_types));
     }
@@ -315,11 +337,13 @@ pub(crate) fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, Compilation
     }
 
     info.scopes.insert(global_scope.into(), global_scope_info);
+
     let mut visitor = TypeInfoVisitor {
         stack: vec![global_scope],
         exprs: &mut info.exprs,
         scopes: &mut info.scopes,
         type_names: &info.type_names,
+        builtins: &mut info.builtins
     };
 
     visitor.visit_file(file);
@@ -366,6 +390,7 @@ struct TypeInfoVisitor<'ast, 'b> {
     scopes: &'b mut HashMap<Scope<'ast>, ScopeInfo<'ast>>,
     // items: HashMap<String, Type>,
     type_names: &'b StringInterner,
+    builtins: &'b mut Builtins
 }
 
 impl<'ast, 'b> Visit<'ast> for TypeInfoVisitor<'ast, 'b> {
@@ -409,6 +434,41 @@ impl<'ast, 'b> Visit<'ast> for TypeInfoVisitor<'ast, 'b> {
         }
 
         visit::visit_local(self, i);
+    }
+
+    fn visit_type(&mut self, i: &'ast syn::Type) {
+        match i {
+            syn::Type::Path(syn::TypePath { path, qself }) if qself.is_none() => {
+                if let Some(ident) = path.get_ident() {
+                    match &ident.to_string()[..] {
+                        "u8" => self.builtins.u8 = true,
+                        "u16" => self.builtins.u16 = true,
+                        "u32" => self.builtins.u32 = true,
+                        "u64" => self.builtins.u64 = true,
+                        "i8" => self.builtins.i8 = true,
+                        "i16" => self.builtins.i16 = true,
+                        "i32" => self.builtins.i32 = true,
+                        "i64" => self.builtins.i64 = true,
+                        "usize" => self.builtins.usize = true,
+                        "isize" => self.builtins.isize = true,
+                        "bool" => self.builtins.bool = true,
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        visit::visit_type(self, i);
+    }
+
+    fn visit_expr_for_loop(&mut self, i: &'ast syn::ExprForLoop) {
+        self.builtins.usize = true;
+        visit::visit_expr_for_loop(self, i);
+    }
+
+    fn visit_lit_bool(&mut self, _: &'ast syn::LitBool) {
+        self.builtins.bool = true;
     }
 }
 

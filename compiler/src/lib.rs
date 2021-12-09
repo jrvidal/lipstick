@@ -121,13 +121,7 @@ impl<'a> SessionError<'a> {
     fn linecolumn_to_index(&self, linecol: LineColumn) -> usize {
         let range = self.files.line_range((), linecol.line - 1).unwrap();
 
-        self.files.source()[range.start..]
-            .char_indices()
-            .skip(linecol.column)
-            .next()
-            .unwrap()
-            .0
-            + range.start
+        range.start + linecol.column
     }
 }
 
