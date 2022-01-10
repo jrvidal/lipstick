@@ -1,0 +1,208 @@
+@import "../node_modules/highlight.js/styles/default.css";
+
+body {
+    font-size: 1.1em;
+    line-height: 1.1;
+    background: #E1E1DB;
+    font-family: "Open Sans", sans-serif;
+}
+
+.hidden {
+  display: none;
+}
+
+/* HEADER */
+
+h1 {
+  display: inline-block;
+}
+
+h1 > img {
+  vertical-align: middle;
+}
+
+.cm-editor, .results-container {
+    background: white;
+    border: 4px solid #bbbbbb;
+    box-sizing: border-box;
+    height: 600px;
+    overflow-y: scroll;
+}
+
+/* TOOLBAR */
+
+.toolbar {
+  margin: 0.5em 0;
+}
+
+button {
+  display: inline-block;
+  border-radius: 4px;
+  width: 2.5rem;
+  height: 2.5rem;
+  font-size: 100%;
+  border-style: solid;
+  cursor: pointer;
+  outline: none;
+  color: white;
+  background-color: #B35F4C;
+  border-color: #B35F4C;
+}
+
+button.help {
+  font-size: 110%;
+  font-weight: bold;
+  background-color: #428bca;
+  border-color: #428bca;
+}
+
+button.generate-link {
+  width: 10rem;
+}
+
+/* MAIN */
+
+.container {
+    display: flex;
+    margin-bottom: 2rem;
+}
+
+.editor {
+    margin-right: 15px;
+}
+
+.container > div {
+    flex: 1;
+}
+
+.results-container > pre {
+  padding: 1em;
+  margin: 0;
+}
+
+.hljs {
+  background: white;
+}
+
+.cm-underline {
+  text-decoration: underline wavy red;
+}
+
+/* ERRORS  */
+
+.errors {
+  display: block;
+}
+
+.error {
+  padding: 1em;
+  cursor: pointer;
+}
+
+.error:hover {
+  background: rgb(221 221 238 / 30%);
+}
+
+.selected-error {
+  background: rgb(221 221 238 / 60%)
+}
+
+.selected-error:hover {
+  background: rgb(221 221 238 / 70%)
+}
+
+/* SPINNER */
+
+.spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    visibility: hidden;
+  }
+
+  .spinner.spinning {
+      visibility: visible;
+  }
+
+  .lipstick.spinning {
+    animation: spinner 1.2s linear infinite;
+  }
+
+  .spinner:after {
+    content: " ";
+    display: block;
+    width: 16px;
+    height: 16px;
+    margin: 8px;
+    border-radius: 50%;
+    border: 6px solid #4ad;
+    border-color: #4ad transparent #4ad transparent;
+    animation: spinner 1.2s linear infinite;
+  }
+  @keyframes spinner {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+/* FOOTER */
+
+.footer {
+  text-align: center;
+}
+
+/* MODAL */
+
+.modal {
+  position: fixed;
+  top: 20%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #f0f0f0;
+  padding: 20px 40px;
+  border-radius: 6px;
+  transition: opacity 0.2s;
+  z-index: 10;
+  opacity: 1;
+  max-width: 40em;
+}
+
+.modal.hidden {
+  display: block;
+  z-index: -1;
+  opacity: 0;
+}
+
+.overlay {
+  display: block;
+  position: fixed;
+  width: 100%;
+  height: 100%;
+  background: black;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  transition: opacity 0.2s;
+  z-index: 9;
+  opacity: 0.5;
+}
+
+.overlay.hidden {
+  opacity: 0;
+}
+
+.overlay.hidden-for-real {
+  z-index: -1;
+}
+
+.modal-toolbar {
+  text-align: right;
+}
+
+.dismiss {
+  width: 5em;
+}

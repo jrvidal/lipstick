@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="./style.css" />
+  <title>lipstick</title>
+  <link rel="icon" href="favicon.png" />
+</head>
+<body>
+
+  <h1>
+    lipstick 💄🐷
+  </h1>
+
+  <div class="spinner"></div>
+
+  <div class="overlay hidden hidden-for-real"></div>
+
+  <div class="modal hidden">
+    <img class="lipstick" src="../lipstick.svg" width="64" />
+
+    <h2>lipstick</h2>
+    <p> <b>lipstick</b> is "Rust-to-C" transpiler. </p>
+
+    <p>Well, not quite. It's more of a Rust-like syntax frontend for the C language. You can write pretty idiomatic Rust
+      (albeit a bit C-looking) and generate C code. Check what is supported in the <a href="https://github.com/jrvidal/lipstick/blob/master/README.md">README</a>.
+
+    <p>Also, you can use <code>lipstick</code> as a CLI tool, check <a href="https://crates.io/crates/lipstick">the crate</a>.
+    
+      <div class="modal-toolbar">
+        <button class="dismiss">Got It</button>
+
+      </div>
+  </div>
+
+  <div class="toolbar">
+    <button class="help">?</button>
+
+    <button class="generate-link">Generate Link</button>
+    <a href="" class="code-link hidden" target="_blank">Link 🗒️</a>
+  </div>
+
+  <div class="container">
+    <div class="editor"></div>
+    <div class="results-container">
+      <pre class="transpiled-container"><code class="transpiled language-c"></code></pre>
+      <pre class="errors-container"><code class="errors"></code></pre>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="https://github.com/jrvidal/lipstick">Code on GitHub</a>
+    &middot;
+    <a href="https://github.com/jrvidal/lipstick/issues/new">File a Bug</a>
+    &middot;
+    <a href="https://crates.io/crates/lipstick">crates.io</a>
+    &middot;
+    <a href="https://jrvidal.github.io/explaine.rs">explaine.rs</a>
+  </div>
+
+
+  <textarea class="default-code hidden">// Based on https://doc.rust-lang.org/book/ch20-03-graceful-shutdown-and-cleanup.html
+include![&lt;stdio>];
+include![&lt;glib>];
+
+/* MESSAGE */
+
+struct Message {
+    type_: u8,
+    job: fn(gpointer),
+    data: gpointer,
+}
+
+fn message_new(job: fn(gpointer), data: gpointer) -> &amp;Message {
+    let message: &amp;Message = malloc(sizeof(Message));
+
+    message.type_ = 0;
+    message.job = job;
+    message.data = data;
+
+    message
+}
+
+fn message_new_terminate() -> &amp;Message {
+    let message: &amp;Message = malloc(sizeof(Message));
+
+    message.type_ = 1;
+
+    message
+}
+
+fn message_destroy(message: &amp;Message) {
+    free(message);
+}
+
+/* WORKER */
+
+fn worker_run(data: gpointer) -> gpointer {
+    let queue: &amp;GAsyncQueue = data as &amp;GAsyncQueue;
+
+    loop {
+        let message: &amp;Message = g_async_queue_pop(queue) as &amp;Message;
+
+        let type_: u8 = message.type_;
+        let data: gpointer = message.data;
+        let job: fn(gpointer) = message.job;
+
+        message_destroy(message);
+
+        match type_ {
+            0 => {
+                job(data);
+            }
+            _ => {
+                break;
+            }
+        }
+    }
+
+    NULL
+}
+
+/* POOL */
+
+struct WorkerPool {
+    queue: &amp;GAsyncQueue,
+    workers: &amp;GList,
+}
+
+fn worker_pool_new(size: usize) -> &amp;WorkerPool {
+    let pool: &amp;WorkerPool = malloc(sizeof(WorkerPool));
+
+    pool.queue = g_async_queue_new();
+
+    for i in 0..size {
+        let thread: &amp;GThread = g_thread_new("worker", worker_run, pool.queue);
+
+        pool.workers = g_list_append(pool.workers, thread as gpointer);
+    }
+
+    pool
+}
+
+fn worker_pool_execute(pool: &amp;WorkerPool, job: fn(gpointer), data: gpointer) {
+    let message: &amp;Message = message_new(job, data);
+
+    g_async_queue_push(pool.queue, message as gpointer);
+}
+
+fn worker_pool_destroy(pool: &amp;WorkerPool) {
+    let size: int = g_list_length(pool.workers);
+
+    for i in 0..size {
+        let message: &amp;Message = message_new_terminate();
+
+        g_async_queue_push(pool.queue, message);
+    }
+
+    let node: &amp;GList = pool.workers;
+
+    while node != NULL {
+        g_thread_join((*node).data as &amp;GThread);
+        node = (*node).next;
+    }
+
+    g_list_free(pool.workers);
+    g_async_queue_unref(pool.queue);
+    free(pool);
+}</textarea>
+    
+  <script type="module" src="./index.ts"> </script>
+
+</body>
+</html>

@@ -87,6 +87,34 @@ impl<'a> SessionError<'a> {
         std::process::exit(1);
     }
 
+    pub fn into_ansi(mut self) -> Vec<(String, Span)> {
+        let errors = {
+            let mut errors = vec![];
+
+            std::mem::swap(&mut errors, &mut self.errors);
+
+            errors
+        };
+
+        errors
+            .into_iter()
+            .map(|error| (error.span, self.map_err(error)))
+            .map(|(span, diagnostic)| {
+                let mut buffer = term::termcolor::Buffer::ansi();
+
+                term::emit(
+                    &mut buffer,
+                    &term::Config::default(),
+                    self.files,
+                    &diagnostic,
+                )
+                .unwrap();
+
+                (String::from_utf8(buffer.into_inner()).unwrap(), span)
+            })
+            .collect()
+    }
+
     fn report_to_writer(
         mut self,
         writer: &mut dyn codespan_reporting::term::termcolor::WriteColor,

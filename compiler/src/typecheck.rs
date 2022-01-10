@@ -247,7 +247,7 @@ impl Default for TypeInfo<'_> {
             scopes: Default::default(),
             declared_types: Default::default(),
             type_names: StringInterner::new(),
-            builtins: Default::default()
+            builtins: Default::default(),
         }
     }
 }
@@ -343,7 +343,7 @@ pub(crate) fn check<'a>(file: &'a syn::File) -> Result<TypeInfo<'a>, Compilation
         exprs: &mut info.exprs,
         scopes: &mut info.scopes,
         type_names: &info.type_names,
-        builtins: &mut info.builtins
+        builtins: &mut info.builtins,
     };
 
     visitor.visit_file(file);
@@ -390,7 +390,7 @@ struct TypeInfoVisitor<'ast, 'b> {
     scopes: &'b mut HashMap<Scope<'ast>, ScopeInfo<'ast>>,
     // items: HashMap<String, Type>,
     type_names: &'b StringInterner,
-    builtins: &'b mut Builtins
+    builtins: &'b mut Builtins,
 }
 
 impl<'ast, 'b> Visit<'ast> for TypeInfoVisitor<'ast, 'b> {
