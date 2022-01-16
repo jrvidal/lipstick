@@ -1,2 +1,8 @@
 [workspace]
 members = ["cli", "compiler", "wasm"]
+
+# TODO: actually use this somehow
+[profile."web-release"]
+inherits = "release"
+# Tell `rustc` to optimize for small code size.
+opt-level = "s"

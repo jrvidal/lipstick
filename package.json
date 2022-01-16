@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "build": "rm -rf dist/ && (cd wasm && wasm-pack build --target web) && parcel build web/index.html && rm dist/*.map",
+    "_build_ts": "parcel build web/index.html && rm dist/*.map",
+    "_build_wasm": "cd wasm && wasm-pack build --target web --",
+    "build": "rm -rf dist/ && npm run _build_wasm && npm run _build_ts",
     "start": "parcel web/index.html"
   },
   "keywords": [],
