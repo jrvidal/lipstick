@@ -130,7 +130,7 @@ impl<'a> Context<'a> {
                         }
                     };
 
-                    out.push(Item::Include(false, header));
+                    prefix.push(Item::Include(false, header));
                     return;
                 }
 
@@ -176,7 +176,7 @@ impl<'a> Context<'a> {
                     return;
                 }
 
-                out.push(Item::Include(true, path))
+                prefix.push(Item::Include(true, path))
             }
             syn::Item::Macro2(_) => fail("Macros"),
             syn::Item::Mod(_) => fail("Modules"),

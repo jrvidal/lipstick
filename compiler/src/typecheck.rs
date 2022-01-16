@@ -393,14 +393,29 @@ struct TypeInfoVisitor<'ast, 'b> {
     builtins: &'b mut Builtins,
 }
 
+impl<'ast, 'b> TypeInfoVisitor<'ast, 'b> {
+    fn add_scope(&mut self, i: &'ast Block) -> bool {
+        if let std::collections::hash_map::Entry::Vacant(vacant) = self.scopes.entry(i.into()) {
+            let mut scope_info: ScopeInfo = Default::default();
+            scope_info.parent = self.stack.last().map(|&block| block.into());
+            vacant.insert(scope_info);
+            self.stack.push(i);
+            return true
+        }
+
+        false
+    }
+}
+
 impl<'ast, 'b> Visit<'ast> for TypeInfoVisitor<'ast, 'b> {
     fn visit_block(&mut self, i: &'ast Block) {
-        let scope = i.into();
-        let mut scope_info = self.scopes.entry(scope).or_insert_with(Default::default);
-        scope_info.parent = self.stack.last().map(|&block| block.into());
-        self.stack.push(i);
+        let should_pop = self.add_scope(i);
+
         visit::visit_block(self, i);
-        let _ = self.stack.pop();
+
+        if should_pop {
+            let _ = self.stack.pop();
+        }
     }
 
     fn visit_expr(&mut self, i: &'ast Expr) {
@@ -428,7 +443,7 @@ impl<'ast, 'b> Visit<'ast> for TypeInfoVisitor<'ast, 'b> {
                 _ => break,
             };
             let type_ = assign_type(&mut self.type_names, ty);
-            let scope_info = self.scopes.entry(scope).or_insert_with(Default::default);
+            let scope_info = self.scopes.get_mut(&scope).expect("no scope_info");
             scope_info.vars.insert(ident.to_string(), type_);
             break;
         }
@@ -469,6 +484,49 @@ impl<'ast, 'b> Visit<'ast> for TypeInfoVisitor<'ast, 'b> {
 
     fn visit_lit_bool(&mut self, _: &'ast syn::LitBool) {
         self.builtins.bool = true;
+    }
+
+    fn visit_item_fn(&mut self, i: &'ast syn::ItemFn) {
+        let should_pop = self.add_scope(&i.block);
+
+        visit::visit_item_fn(self, i);
+
+        if should_pop {
+            let _ = self.stack.pop();
+        }
+    }
+
+    fn visit_signature(&mut self, i: &'ast syn::Signature) {
+        for arg in &i.inputs {
+            let block = if let Some(block) = self.stack.last() {
+                block
+            } else {
+                continue;
+            };
+
+            let scope = (*block).into();
+
+            let (ident, ty) = if let syn::FnArg::Typed(syn::PatType {
+                pat,
+                attrs: _,
+                colon_token: _,
+                ty
+            }) = arg {
+                if let syn::Pat::Ident(ident) = &**pat {
+                    (&ident.ident, ty)
+                } else {
+                    continue;
+                }
+            } else {
+                continue;
+            };
+
+            let type_ = assign_type(&mut self.type_names, ty);
+            let scope_info = self.scopes.get_mut(&scope).expect("no scope_info");
+            scope_info.vars.insert(ident.to_string(), type_);
+        }
+
+        visit::visit_signature(self, i);
     }
 }
 

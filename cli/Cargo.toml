@@ -1,6 +1,6 @@
 [package]
 name = "lipstick"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Roberto Vidal <vidal.roberto.j@gmail.com>"]
 edition = "2021"
 repository = "https://github.com/jrvidal/lipstick"
@@ -12,4 +12,4 @@ dev = ["compiler/dev"]
 
 [dependencies]
 clap = "2.33.3"
-compiler = { package = "lipstick_compiler", path = "../compiler", version = "0.3.0" }
+compiler = { package = "lipstick_compiler", path = "../compiler", version = "0.4.0" }
