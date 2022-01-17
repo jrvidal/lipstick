@@ -26,7 +26,10 @@ h1 > img {
     border: 4px solid #bbbbbb;
     box-sizing: border-box;
     height: 600px;
-    overflow-y: scroll;
+}
+
+.results-container {
+  overflow-y: scroll;
 }
 
 /* TOOLBAR */

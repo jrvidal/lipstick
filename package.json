@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "scripts": {
-    "_build_ts": "parcel build web/index.html && rm dist/*.map",
+    "_build_ts": "parcel build --target prod && rm dist/*.map",
     "_build_wasm": "cd wasm && wasm-pack build --target web --",
     "build": "rm -rf dist/ && npm run _build_wasm && npm run _build_ts",
     "start": "parcel web/index.html"
@@ -21,5 +21,11 @@
     "@codemirror/lang-rust": "^0.19.1",
     "ansicolor": "^1.1.95",
     "highlight.js": "^10.4.1"
+  },
+  "targets": {
+    "prod": {
+      "source": "web/index.html",
+      "publicUrl": "."
+    }
   }
 }
